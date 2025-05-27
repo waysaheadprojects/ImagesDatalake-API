@@ -18,9 +18,19 @@ import spacy
 import psycopg2, ast, json
 import os
 import boto3
+from fastapi.middleware.cors import CORSMiddleware
+
+
+
 # ----------------- FastAPI Init -----------------
 app = FastAPI()
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Replace "*" with specific domains in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # ----------------- Pydantic Schemas -----------------
 class AskRequest(BaseModel):
     question: str
