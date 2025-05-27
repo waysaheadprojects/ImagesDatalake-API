@@ -19,7 +19,11 @@ import psycopg2, ast, json
 import os
 import boto3
 from fastapi.middleware.cors import CORSMiddleware
-
+from Models.loginModel import LoginRequest
+from DbContext import Database
+from auth import create_access_token, verify_token
+from datetime import timedelta
+from fastapi import Depends, HTTPException
 
 
 # ----------------- FastAPI Init -----------------
@@ -516,6 +520,38 @@ async def get_insights(payload: InsightRequest):
     except Exception as e:
         logging.error(f"/get_insights failed: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+db = Database()
+
+@app.post("/login")
+def login(request_data: LoginRequest, request: Request):
+    cursor = db.get_cursor()
+    cursor.execute("SELECT * FROM tb_dim_user WHERE email = %s", (request_data.email,))
+    user = cursor.fetchone()
+
+    if not user or request_data.password != user["password"]:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token(
+        data={"sub": request_data.email},
+        expires_delta=timedelta(minutes=60)
+    )
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": user
+    }
+
+@app.get("/verify-token")
+def verify_token_endpoint(payload=Depends(verify_token)):
+    email = payload.get("sub")
+    cursor = db.get_cursor()
+    cursor.execute("SELECT * FROM tb_dim_user WHERE email = %s", (email,))
+    user = cursor.fetchone()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"valid": True, "user": user}
 
 
 # ----------------- Router (for initial tool type classification) -----------------
