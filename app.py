@@ -531,44 +531,50 @@ def login(request_data: LoginRequest, request: Request):
         cursor.execute(query, (request_data.email,))
         user = cursor.fetchone()
 
+        login_status = "Failed"
+        login_reason = ""
+        login_token = None
+
         if not user:
+            login_reason = "User not found"
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
-        if request_data.password != user.get("password"):
+        if request_data.password != user["password"]:
+            login_reason = "Invalid password"
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
-        # Create JWT token
+        # ✅ Create JWT token
         login_token = create_access_token(
             data={"sub": request_data.email},
             expires_delta=timedelta(minutes=60)
         )
+        login_status = "Success"
+        login_reason = "Login successful"
 
-        # Insert login log
+        # ✅ Insert login log
+        ip_address = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+
         insert_log_query = """
             INSERT INTO tb_dim_user_login_logs (userid, email, login_token, status, reason, ip_address, user_agent)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         cursor.execute(insert_log_query, (
             user.get("user_key"), request_data.email, login_token,
-            "Success", "Login successful",
-            request.client.host, request.headers.get("user-agent")
+            login_status, login_reason, ip_address, user_agent
         ))
         db.connection.commit()
 
         return {
             "access_token": login_token,
-            "user": {
-                "user_key": user.get("user_key"),
-                "email": user.get("email"),
-                "name": user.get("name")  # Optional: customize returned fields
-            },
+            "user": user,
             "token_type": "bearer"
         }
 
     except HTTPException as e:
         raise e
     except Exception as e:
-        logging.error(f"🚨 Error in /login: {str(e)}")
+        logging.error(f"🚨 Error in /login: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
