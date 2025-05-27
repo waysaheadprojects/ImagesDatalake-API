@@ -354,7 +354,7 @@ from langgraph.checkpoint.memory import MemorySaver
 tools = [query_zoho_leads, retrieve_documents, fetch_youtube_videos, detect_people_and_images]
 
 # Bind tools to the LLM (no system_prompt here)
-llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+llm = ChatOpenAI(model="gpt-4o-mini-2024-07-18", temperature=0)
 llm_with_tools = llm.bind_tools(tools, tool_choice="auto")  # Correct usage
 
 # Shared state type
