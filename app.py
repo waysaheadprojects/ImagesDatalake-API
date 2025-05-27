@@ -531,16 +531,10 @@ def login(request_data: LoginRequest, request: Request):
         cursor.execute(query, (request_data.email,))
         user = cursor.fetchone()
 
-        login_status = "Failed"
-        login_reason = ""
-        login_token = None
-
         if not user:
-            login_reason = "User not found"
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
-        if request_data.password != user["password"]:
-            login_reason = "Invalid password"
+        if request_data.password != user.get("password"):
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
         # Create JWT token
@@ -548,8 +542,6 @@ def login(request_data: LoginRequest, request: Request):
             data={"sub": request_data.email},
             expires_delta=timedelta(minutes=60)
         )
-        login_status = "Success"
-        login_reason = "Login successful"
 
         # Insert login log
         insert_log_query = """
@@ -557,22 +549,28 @@ def login(request_data: LoginRequest, request: Request):
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         cursor.execute(insert_log_query, (
-            user["user_key"], request_data.email, login_token, login_status, login_reason,
+            user.get("user_key"), request_data.email, login_token,
+            "Success", "Login successful",
             request.client.host, request.headers.get("user-agent")
         ))
         db.connection.commit()
 
         return {
             "access_token": login_token,
-            "user": user,
+            "user": {
+                "user_key": user.get("user_key"),
+                "email": user.get("email"),
+                "name": user.get("name")  # Optional: customize returned fields
+            },
             "token_type": "bearer"
         }
 
     except HTTPException as e:
         raise e
     except Exception as e:
-        print("🚨 Error in /login:", str(e))
+        logging.error(f"🚨 Error in /login: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
 
 
 @app.get("/verify-token")
