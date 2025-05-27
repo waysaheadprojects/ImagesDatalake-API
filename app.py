@@ -46,7 +46,7 @@ TABLE_NAME = "tb_vector_embeddings"
 
 DB_CONFIG = {
     "host": os.getenv("POSTGRES_HOST"),
-    "port": int(os.getenv("POSTGRES_PORT")),
+    "port": int(os.getenv("POSTGRES_PORT", "5432")),
     "dbname": os.getenv("POSTGRES_DB"),
     "user": os.getenv("POSTGRES_USER"),
     "password": os.getenv("POSTGRES_PASSWORD")
@@ -163,7 +163,7 @@ def query_zoho_leads(input_text: str) -> List[dict]:
         """
         conn = psycopg2.connect(
             host=os.getenv("POSTGRES_HOST"),
-            port=int(os.getenv("POSTGRES_PORT")),
+            port= int(os.getenv("POSTGRES_PORT", "5432")),
             dbname=os.getenv("POSTGRES_STG_DB"),
             user=os.getenv("POSTGRES_STG_USER"),
             password=os.getenv("POSTGRES_STG_PASSWORD")
