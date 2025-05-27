@@ -525,23 +525,55 @@ db = Database()
 
 @app.post("/login")
 def login(request_data: LoginRequest, request: Request):
-    cursor = db.get_cursor()
-    cursor.execute("SELECT * FROM tb_dim_user WHERE email = %s", (request_data.email,))
-    user = cursor.fetchone()
+    try:
+        cursor = db.get_cursor()
+        query = "SELECT * FROM tb_dim_user WHERE email = %s"
+        cursor.execute(query, (request_data.email,))
+        user = cursor.fetchone()
 
-    if not user or request_data.password != user["password"]:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        login_status = "Failed"
+        login_reason = ""
+        login_token = None
 
-    token = create_access_token(
-        data={"sub": request_data.email},
-        expires_delta=timedelta(minutes=60)
-    )
+        if not user:
+            login_reason = "User not found"
+            raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": user
-    }
+        if request_data.password != user["password"]:
+            login_reason = "Invalid password"
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        # Create JWT token
+        login_token = create_access_token(
+            data={"sub": request_data.email},
+            expires_delta=timedelta(minutes=60)
+        )
+        login_status = "Success"
+        login_reason = "Login successful"
+
+        # Insert login log
+        insert_log_query = """
+            INSERT INTO tb_dim_user_login_logs (userid, email, login_token, status, reason, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        cursor.execute(insert_log_query, (
+            user["user_key"], request_data.email, login_token, login_status, login_reason,
+            request.client.host, request.headers.get("user-agent")
+        ))
+        db.connection.commit()
+
+        return {
+            "access_token": login_token,
+            "user": user,
+            "token_type": "bearer"
+        }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print("🚨 Error in /login:", str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @app.get("/verify-token")
 def verify_token_endpoint(payload=Depends(verify_token)):
