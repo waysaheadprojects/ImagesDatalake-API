@@ -375,6 +375,7 @@ def chatbot(state: State):
                 "You are a helpful assistant with access to tools.\n"
                 "You may call multiple tools in one step if needed.\n"
                 "For example, for queries about people, use both `query_zoho_leads` and `retrieve_documents`."
+                "Give response for both the tools in proper HTML"
             )
         }
         state["messages"].insert(0, system_instruction)
