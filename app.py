@@ -431,28 +431,72 @@ def get_current_user(payload=Depends(verify_token)):
 @app.post("/ask")
 async def ask(payload: AskRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """
-    Main LangGraph-driven Q&A endpoint.
+    Handles AI-driven chat interactions using LangGraph agent and stores the conversation history.
 
-    Accepts:
-    - payload.question: the user query
-    - thread_id (optional query param or header): unique session ID for memory
+    - Accepts a user question via POST body (`question`).
+    - Retrieves or generates a `session_id` via query param or request header.
+    - Uses LangGraph to generate assistant response with memory support.
+    - Automatically logs both user and assistant messages into `tb_chat_history`.
+    - Supports persistent multi-turn context by session ID.
+    - Requires valid JWT token via Authorization header.
+
+    Args:
+        payload (AskRequest): The incoming request payload containing the user question.
+        request (Request): FastAPI request object to extract headers and metadata.
+        current_user (dict): Decoded user info from JWT token (injected by `Depends`).
 
     Returns:
-    - Latest assistant message (multi-turn aware)
+        dict: The assistant's final HTML-formatted response as `{"answer": "<div>...</div>"}`.
+
+    Raises:
+        JSONResponse: 500 Internal Server Error if processing or database storage fails.
     """
     try:
-        # Extract thread_id from query or headers, fallback to 'default'
-        thread_id = request.query_params.get("thread_id") or request.headers.get("thread-id") or "default"
+        session_id = request.query_params.get("session_id") or request.headers.get("session-id") or current_user.get("sub", "default")
 
-        result = graph.invoke(
-            {"messages": [{"role": "user", "content": payload.question}]},
-            config={"configurable": {"thread_id": thread_id}}
-        )
-        return {"answer": result["messages"][-1].content}
+        # Inject user message into memory and invoke LangGraph
+        user_msg = {"role": "user", "content": payload.question}
+        result = graph.invoke({"messages": [user_msg]}, config={"configurable": {"thread_id": session_id}})
+        assistant_msg = result["messages"][-1]
+
+        # 🔍 Detect tool from assistant's metadata (if available)
+        tool_used = getattr(assistant_msg, "tool_call", None) or "chat"
+
+        # Store user message
+        cursor = db.get_cursor()
+        cursor.execute("""
+            INSERT INTO tb_chat_history (
+                interaction_key, session_id, user_key, message_order,
+                message_role, message_text, message_html,
+                tool_used, is_active, is_deleted, created_at, modified_at
+            )
+            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, true, false, NOW(), NOW());
+        """, (
+            session_id, current_user["user_key"], 1,  # Assuming first message in session
+            "user", payload.question, None, "chat"
+        ))
+
+        # Store assistant message
+        cursor.execute("""
+            INSERT INTO tb_chat_history (
+                interaction_key, session_id, user_key, message_order,
+                message_role, message_text, message_html,
+                tool_used, is_active, is_deleted, created_at, modified_at
+            )
+            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, true, false, NOW(), NOW());
+        """, (
+            session_id, current_user["user_key"], 2,
+            "assistant", assistant_msg.content, assistant_msg.content, tool_used
+        ))
+
+        db.connection.commit()
+
+        return {"answer": assistant_msg.content}
 
     except Exception as e:
         logging.error(f"/ask failed: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 
 @app.post("/get_images")
