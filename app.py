@@ -520,18 +520,6 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         db.connection.rollback()
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-except Exception as e:
-    logging.error(f"❌ DB insert failed: {e}")
-    db.connection.rollback()  # ✅ THIS LINE IS CRITICAL
-    return JSONResponse(status_code=500, content={"error": str(e)})
-
-
-        return {"answer": assistant_msg.content}
-
-    except Exception as e:
-        logging.error(f"/ask failed: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
 
 
 @app.post("/get_images")
