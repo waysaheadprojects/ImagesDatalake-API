@@ -428,68 +428,103 @@ def get_current_user(payload=Depends(verify_token)):
         raise HTTPException(status_code=401, detail="Invalid token")
     return payload 
 
+
 @app.post("/ask")
 async def ask(payload: AskRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """
-    Handles AI-driven chat interactions using LangGraph agent and stores the conversation history.
-
-    - Accepts a user question via POST body (`question`).
-    - Retrieves or generates a `session_id` via query param or request header.
-    - Uses LangGraph to generate assistant response with memory support.
-    - Automatically logs both user and assistant messages into `tb_chat_history`.
-    - Supports persistent multi-turn context by session ID.
-    - Requires valid JWT token via Authorization header.
-
-    Args:
-        payload (AskRequest): The incoming request payload containing the user question.
-        request (Request): FastAPI request object to extract headers and metadata.
-        current_user (dict): Decoded user info from JWT token (injected by `Depends`).
-
-    Returns:
-        dict: The assistant's final HTML-formatted response as `{"answer": "<div>...</div>"}`.
-
-    Raises:
-        JSONResponse: 500 Internal Server Error if processing or database storage fails.
+    Executes LangGraph assistant with session-aware memory and stores chat messages in tb_chat_history.
+    
+    - Accepts user question.
+    - Uses session_id (from query, header, or default).
+    - Calls LangGraph agent with memory.
+    - Logs both user and assistant messages to DB.
     """
     try:
-        session_id = request.query_params.get("session_id") or request.headers.get("session-id") or current_user.get("sub", "default")
+        # 🧠 Extract session ID and user ID
+        session_id = (
+            request.query_params.get("session_id") or 
+            request.headers.get("session-id") or 
+            f"default-session-{current_user.get('sub')}"
+        )
+        user_key = current_user.get("user_key")
+        if not user_key:
+            raise HTTPException(status_code=401, detail="Missing user_key in token")
 
-        # Inject user message into memory and invoke LangGraph
-        user_msg = {"role": "user", "content": payload.question}
-        result = graph.invoke({"messages": [user_msg]}, config={"configurable": {"thread_id": session_id}})
+        # 🔢 Get next message_order in session
+        cursor = db.get_cursor()
+        cursor.execute(
+            "SELECT MAX(message_order) FROM tb_chat_history WHERE session_id = %s", 
+            (session_id,)
+        )
+        last_order = cursor.fetchone()[0] or 0
+
+        # 🧠 User message
+        user_message = {
+            "role": "user",
+            "content": payload.question
+        }
+
+        # 🔄 Call LangGraph with memory
+        result = graph.invoke(
+            {"messages": [user_message]},
+            config={"configurable": {"thread_id": session_id}}
+        )
         assistant_msg = result["messages"][-1]
 
-        # 🔍 Detect tool from assistant's metadata (if available)
-        tool_used = getattr(assistant_msg, "tool_call", None) or "chat"
+        # 🧰 Detect tool used (fallback to 'chat')
+        tool_used = getattr(assistant_msg, "tool_call", None)
+        if isinstance(tool_used, dict):
+            tool_used = tool_used.get("name", "chat")
+        elif not tool_used:
+            tool_used = "chat"
 
-        # Store user message
-        cursor = db.get_cursor()
+        now = datetime.utcnow()
+
+        # ✅ Store user message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
-                message_role, message_text, message_html,
-                tool_used, is_active, is_deleted, created_at, modified_at
+                message_role, message_text, message_html, tool_used,
+                is_active, is_deleted, created_at, modified_at
             )
-            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, true, false, NOW(), NOW());
+            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, NULL, %s,
+                    true, false, %s, %s)
         """, (
-            session_id, current_user["user_key"], 1,  # Assuming first message in session
-            "user", payload.question, None, "chat"
+            session_id, user_key, last_order + 1,
+            "user", payload.question, "chat",
+            now, now
         ))
 
-        # Store assistant message
+        # ✅ Store assistant message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
-                message_role, message_text, message_html,
-                tool_used, is_active, is_deleted, created_at, modified_at
+                message_role, message_text, message_html, tool_used,
+                is_active, is_deleted, created_at, modified_at
             )
-            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, true, false, NOW(), NOW());
+            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s,
+                    true, false, %s, %s)
         """, (
-            session_id, current_user["user_key"], 2,
-            "assistant", assistant_msg.content, assistant_msg.content, tool_used
+            session_id, user_key, last_order + 2,
+            "assistant", assistant_msg.content, assistant_msg.content, tool_used,
+            now, now
         ))
 
+        # 💾 Commit
         db.connection.commit()
+
+        return {"answer": assistant_msg.content}
+
+    except Exception as e:
+        logging.error("❌ /ask failed:\n" + str(e))
+        db.connection.rollback()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+except Exception as e:
+    logging.error(f"❌ DB insert failed: {e}")
+    db.connection.rollback()  # ✅ THIS LINE IS CRITICAL
+    return JSONResponse(status_code=500, content={"error": str(e)})
+
 
         return {"answer": assistant_msg.content}
 
