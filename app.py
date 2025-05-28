@@ -429,96 +429,100 @@ def get_current_user(payload=Depends(verify_token)):
     return payload 
 
 
+from fastapi import Request, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from datetime import datetime
+import traceback
+import logging
+
 @app.post("/ask")
 async def ask(payload: AskRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """
-    Executes LangGraph assistant with session-aware memory and stores chat messages in tb_chat_history.
+    Handles AI Q&A with LangGraph agent.
     
-    - Accepts user question.
-    - Uses session_id (from query, header, or default).
-    - Calls LangGraph agent with memory.
-    - Logs both user and assistant messages to DB.
+    - Accepts user question and session_id
+    - Persists both user and assistant messages to `tb_chat_history`
+    - Tracks tool used, formats HTML, and enables memory-based conversation
+    - Requires JWT token with 'user_key' (INTEGER) and 'sub' (email)
+
+    Returns:
+        dict: Assistant's HTML-formatted response
     """
     try:
-        # 🧠 Extract session ID and user ID
+        # 📥 Extract session ID and user details
         session_id = (
-            request.query_params.get("session_id") or 
-            request.headers.get("session-id") or 
+            request.query_params.get("session_id") or
+            request.headers.get("session-id") or
             f"default-session-{current_user.get('sub')}"
         )
         user_key = current_user.get("user_key")
         if not user_key:
             raise HTTPException(status_code=401, detail="Missing user_key in token")
 
-        # 🔢 Get next message_order in session
         cursor = db.get_cursor()
+
+        # 🔢 Get next message order
         cursor.execute(
-            "SELECT MAX(message_order) FROM tb_chat_history WHERE session_id = %s", 
+            "SELECT MAX(message_order) FROM tb_chat_history WHERE session_id = %s",
             (session_id,)
         )
         last_order = cursor.fetchone()[0] or 0
+        now = datetime.utcnow()
 
-        # 🧠 User message
-        user_message = {
-            "role": "user",
-            "content": payload.question
-        }
-
-        # 🔄 Call LangGraph with memory
+        # 🧠 Build user message and run LangGraph agent
+        user_message = {"role": "user", "content": payload.question}
         result = graph.invoke(
             {"messages": [user_message]},
             config={"configurable": {"thread_id": session_id}}
         )
         assistant_msg = result["messages"][-1]
 
-        # 🧰 Detect tool used (fallback to 'chat')
+        # 🧰 Detect tool used
         tool_used = getattr(assistant_msg, "tool_call", None)
         if isinstance(tool_used, dict):
             tool_used = tool_used.get("name", "chat")
-        elif not tool_used:
+        if not tool_used:
             tool_used = "chat"
 
-        now = datetime.utcnow()
-
-        # ✅ Store user message
+        # ✅ Insert user message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
                 message_role, message_text, message_html, tool_used,
                 is_active, is_deleted, created_at, modified_at
             )
-            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, NULL, %s,
-                    true, false, %s, %s)
+            VALUES (gen_random_uuid(), %s, %s, %s,
+                    %s, %s, NULL, %s, true, false, %s, %s)
         """, (
             session_id, user_key, last_order + 1,
             "user", payload.question, "chat",
             now, now
         ))
 
-        # ✅ Store assistant message
+        # ✅ Insert assistant message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
                 message_role, message_text, message_html, tool_used,
                 is_active, is_deleted, created_at, modified_at
             )
-            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s,
-                    true, false, %s, %s)
+            VALUES (gen_random_uuid(), %s, %s, %s,
+                    %s, %s, %s, %s, true, false, %s, %s)
         """, (
             session_id, user_key, last_order + 2,
             "assistant", assistant_msg.content, assistant_msg.content, tool_used,
             now, now
         ))
 
-        # 💾 Commit
         db.connection.commit()
 
         return {"answer": assistant_msg.content}
 
     except Exception as e:
-        logging.error("❌ /ask failed:\n" + str(e))
+        logging.error("❌ /ask failed:\n" + traceback.format_exc())
         db.connection.rollback()
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": traceback.format_exc()})
+
 
 
 
