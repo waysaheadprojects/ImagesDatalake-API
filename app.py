@@ -374,8 +374,11 @@ def chatbot(state: State):
             "content": (
                 "You are a helpful assistant with access to tools.\n"
                 "You may call multiple tools in one step if needed.\n"
-                "For example, for queries about people, use both `query_zoho_leads` and `retrieve_documents`."
-                "Give response for both the tools in proper HTML"
+                "Always return your response in **HTML format**.\n"
+                "Wrap insights, tables, tool outputs, and responses inside proper HTML tags.\n"
+                "For example, use <div>, <p>, <h3>, <ul>, <li>, <table>, <tr>, <td> etc., depending on the content.\n"
+                "If you use tools like `query_zoho_leads` or `retrieve_documents`, show both results clearly in HTML.\n"
+                "Do NOT return Markdown or plain text. Return valid HTML only."
             )
         }
         state["messages"].insert(0, system_instruction)
