@@ -435,10 +435,15 @@ from datetime import datetime
 import traceback
 import logging
 
+
 @app.post("/ask")
 async def ask(payload: AskRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """
-    Handles LangGraph conversation with persistent session memory using PostgreSQL.
+    LangGraph-powered assistant with chat history memory and HTML-formatted responses.
+
+    - Loads session memory from DB on resume
+    - Injects system prompt for HTML output
+    - Stores both user and assistant messages
     """
     try:
         session_id = (
@@ -452,7 +457,7 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
 
         cursor = db.get_cursor()
 
-        # ✅ Get last message order
+        # 🔢 Get last message order
         cursor.execute("""
             SELECT MAX(message_order) AS max_order
             FROM tb_chat_history
@@ -460,11 +465,9 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         """, (session_id,))
         row = cursor.fetchone()
         last_order = row["max_order"] if row and row["max_order"] is not None else 0
-
         now = datetime.utcnow()
-        user_message = {"role": "user", "content": payload.question}
 
-        # ✅ Rehydrate memory manually by building full history
+        # ✅ Rehydrate memory from DB
         cursor.execute("""
             SELECT message_role, message_text
             FROM tb_chat_history
@@ -474,51 +477,62 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         rows = cursor.fetchall()
         history = [{"role": r["message_role"], "content": r["message_text"]} for r in rows]
 
-        # Add current user message
-        full_messages = history + [user_message]
+        # ✅ System prompt for HTML responses
+        system_instruction = {
+            "role": "system",
+            "content": (
+                "You are a helpful assistant with access to tools.\n"
+                "You may call multiple tools in one step if needed.\n"
+                "Always return your response in <b>HTML format</b>.\n"
+                "Use proper tags like <div>, <p>, <ul>, <li>, <h3>, <table>.\n"
+                "Never return plain text or Markdown.\n"
+                "Example: <div><h3>Insights</h3><ul><li><b>Name:</b> Kishore Biyani</li></ul></div>"
+            )
+        }
 
-        # ✅ Invoke LangGraph with full message history
+        user_message = {"role": "user", "content": payload.question}
+        full_messages = [system_instruction] + history + [user_message]
+
+        # 🤖 Invoke LangGraph
         result = graph.invoke(
             {"messages": full_messages},
             config={"configurable": {"thread_id": session_id}}
         )
         assistant_msg = result["messages"][-1]
 
-        # Detect tool
+        # 🛠 Tool detection
         tool_used = getattr(assistant_msg, "tool_call", None)
         if isinstance(tool_used, dict):
             tool_used = tool_used.get("name", "chat")
         if not tool_used:
             tool_used = "chat"
 
-        # Store user message
+        # 💾 Store user message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
                 message_role, message_text, message_html, tool_used,
                 is_active, is_deleted, created_at, modified_at
-            ) VALUES (
-                gen_random_uuid(), %s, %s, %s,
-                %s, %s, NULL, %s,
-                true, false, %s, %s
             )
+            VALUES (gen_random_uuid(), %s, %s, %s,
+                    %s, %s, NULL, %s,
+                    true, false, %s, %s)
         """, (
             session_id, user_key, last_order + 1,
             "user", payload.question, "chat",
             now, now
         ))
 
-        # Store assistant message
+        # 💾 Store assistant message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
                 message_role, message_text, message_html, tool_used,
                 is_active, is_deleted, created_at, modified_at
-            ) VALUES (
-                gen_random_uuid(), %s, %s, %s,
-                %s, %s, %s, %s,
-                true, false, %s, %s
             )
+            VALUES (gen_random_uuid(), %s, %s, %s,
+                    %s, %s, %s, %s,
+                    true, false, %s, %s)
         """, (
             session_id, user_key, last_order + 2,
             "assistant", assistant_msg.content, assistant_msg.content, tool_used,
