@@ -438,22 +438,17 @@ import logging
 @app.post("/ask")
 async def ask(payload: AskRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """
-    Handles AI Q&A with LangGraph agent.
+    Handles AI Q&A with LangGraph agent and session memory support.
     
-    - Accepts user question and session_id
-    - Persists both user and assistant messages to `tb_chat_history`
-    - Tracks tool used, formats HTML, and enables memory-based conversation
-    - Requires JWT token with 'user_key' (INTEGER) and 'sub' (email)
-
-    Returns:
-        dict: Assistant's HTML-formatted response
+    - Loads memory from DB if session exists.
+    - Stores user and assistant messages.
+    - Supports session_id and per-user chat history.
     """
     try:
-        # 📥 Extract session ID and user details
         session_id = (
-            request.query_params.get("session_id") or
-            request.headers.get("session-id") or
-            f"default-session-{current_user.get('sub')}"
+            request.query_params.get("session_id")
+            or request.headers.get("session-id")
+            or f"default-session-{current_user.get('sub')}"
         )
         user_key = current_user.get("user_key")
         if not user_key:
@@ -461,18 +456,37 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
 
         cursor = db.get_cursor()
 
-        # 🔢 Get next message order
-        cursor.execute(
-            "SELECT MAX(message_order) AS max_order FROM tb_chat_history WHERE session_id = %s",
-            (session_id,)
-        )
+        # 🔄 Rehydrate memory if not already cached
+        if session_id not in memory.store:
+            cursor.execute("""
+                SELECT message_role, message_text
+                FROM tb_chat_history
+                WHERE session_id = %s AND is_deleted = false
+                ORDER BY message_order
+            """, (session_id,))
+            rows = cursor.fetchall()
+
+            messages = []
+            for row in rows:
+                messages.append({
+                    "role": row["message_role"],
+                    "content": row["message_text"]
+                })
+            memory.store[session_id] = messages
+
+        # 🔢 Get last message order
+        cursor.execute("""
+            SELECT MAX(message_order) AS max_order
+            FROM tb_chat_history
+            WHERE session_id = %s
+        """, (session_id,))
         row = cursor.fetchone()
         last_order = row["max_order"] if row and row["max_order"] is not None else 0
 
         now = datetime.utcnow()
-
-        # 🧠 Build user message and run LangGraph agent
         user_message = {"role": "user", "content": payload.question}
+
+        # 🧠 Run LangGraph with rehydrated memory
         result = graph.invoke(
             {"messages": [user_message]},
             config={"configurable": {"thread_id": session_id}}
@@ -486,7 +500,7 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         if not tool_used:
             tool_used = "chat"
 
-        # ✅ Insert user message
+        # 💾 Store user message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
@@ -494,14 +508,15 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
                 is_active, is_deleted, created_at, modified_at
             )
             VALUES (gen_random_uuid(), %s, %s, %s,
-                    %s, %s, NULL, %s, true, false, %s, %s)
+                    %s, %s, NULL, %s,
+                    true, false, %s, %s)
         """, (
             session_id, user_key, last_order + 1,
             "user", payload.question, "chat",
             now, now
         ))
 
-        # ✅ Insert assistant message
+        # 💾 Store assistant message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
@@ -509,7 +524,8 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
                 is_active, is_deleted, created_at, modified_at
             )
             VALUES (gen_random_uuid(), %s, %s, %s,
-                    %s, %s, %s, %s, true, false, %s, %s)
+                    %s, %s, %s, %s,
+                    true, false, %s, %s)
         """, (
             session_id, user_key, last_order + 2,
             "assistant", assistant_msg.content, assistant_msg.content, tool_used,
@@ -524,7 +540,6 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         logging.error("❌ /ask failed:\n" + traceback.format_exc())
         db.connection.rollback()
         return JSONResponse(status_code=500, content={"error": traceback.format_exc()})
-
 
 
 
