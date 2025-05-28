@@ -24,6 +24,7 @@ from DbContext import Database
 from auth import create_access_token, verify_token
 from datetime import timedelta
 from fastapi import Depends, HTTPException
+from fastapi import Query
 
 
 # ----------------- FastAPI Init -----------------
@@ -745,6 +746,49 @@ async def visualize_graph():
 
     except Exception as e:
         return HTMLResponse(content=f"<h3>⚠️ Error generating graph: {e}</h3>", status_code=500)
+
+
+
+
+
+@app.get("/user-chats")
+def get_all_chats_for_user(
+    user_key: int = Query(..., description="User key to fetch all chat messages")
+):
+    """
+    Returns all chat messages for a user, ordered by created_at.
+
+    Each message includes session_id to know which thread it belongs to.
+    """
+    try:
+        cursor = db.get_cursor()
+        cursor.execute("""
+            SELECT session_id, message_order, message_role, message_text, message_html, tool_used, created_at
+            FROM tb_chat_history
+            WHERE user_key = %s AND is_deleted = false
+            ORDER BY created_at ASC;
+        """, (user_key,))
+        rows = cursor.fetchall()
+
+        chats = [
+            {
+                "session_id": row["session_id"],
+                "order": row["message_order"],
+                "role": row["message_role"],
+                "text": row["message_text"],
+                "html": row["message_html"],
+                "tool_used": row["tool_used"],
+                "created_at": row["created_at"].isoformat()
+            }
+            for row in rows
+        ]
+        return {"chats": chats}
+
+    except Exception as e:
+        import traceback
+        logging.error(traceback.format_exc())
+        return JSONResponse(status_code=500, content={"error": traceback.format_exc()})
+
 
 
 
