@@ -400,7 +400,7 @@ def chatbot(state: State):
             "  </ul>\n"
             "</div>\n"
             "\n"
-            "Be concise, professional, and visually clear — as if your output will appear in a business analytics dashboard."
+            "Be concise, professional, and visually clear — as if your output will appear in a business analytics dashboard AND Use Bullets for pointers please"
         )
         }
         state["messages"].insert(0, system_instruction)
