@@ -402,7 +402,6 @@ def chatbot(state: State):
             "\n"
             "Be concise, professional, and visually clear — as if your output will appear in a business analytics dashboard."
         )
-                )
         }
         state["messages"].insert(0, system_instruction)
     return {"messages": [llm_with_tools.invoke(state["messages"])]}
