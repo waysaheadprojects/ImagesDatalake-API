@@ -402,7 +402,7 @@ graph = graph_builder.compile(checkpointer=memory)
 from fastapi import Request
 
 @app.post("/ask")
-async def ask(payload: AskRequest, request: Request):
+async def ask(payload: AskRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """
     Main LangGraph-driven Q&A endpoint.
 
@@ -429,21 +429,21 @@ async def ask(payload: AskRequest, request: Request):
 
 
 @app.post("/get_images")
-async def get_images(payload: ImageRequest):
+async def get_images(payload: ImageRequest, current_user: dict = Depends(get_current_user)):
     try:
         return {"images": detect_people_and_images.invoke({"input": payload.answer})}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/get_videos")
-async def get_videos(payload: VideoRequest):
+async def get_videos(payload: VideoRequest, current_user: dict = Depends(get_current_user))::
     try:
         return {"videos": fetch_youtube_videos.invoke({"input": payload.question})}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/get_sources")
-async def get_sources(payload: SourceRequest):
+async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_current_user)):
     try:
         question = payload.question.strip()
 
@@ -476,7 +476,7 @@ async def get_sources(payload: SourceRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/get_insights")
-async def get_insights(payload: InsightRequest):
+async def get_insights(payload: InsightRequest, current_user: dict = Depends(get_current_user)):
     try:
         question = payload.question.strip()
         answer = payload.answer.strip()
@@ -593,7 +593,10 @@ def verify_token_endpoint(payload=Depends(verify_token)):
         raise HTTPException(status_code=404, detail="User not found")
     return {"valid": True, "user": user}
 
-
+def get_current_user(payload=Depends(verify_token)):
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return payload 
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
     question = state["input"]
