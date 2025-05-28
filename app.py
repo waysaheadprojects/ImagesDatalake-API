@@ -401,6 +401,11 @@ graph = graph_builder.compile(checkpointer=memory)
 
 from fastapi import Request
 
+def get_current_user(payload=Depends(verify_token)):
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return payload 
+
 @app.post("/ask")
 async def ask(payload: AskRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """
@@ -593,10 +598,7 @@ def verify_token_endpoint(payload=Depends(verify_token)):
         raise HTTPException(status_code=404, detail="User not found")
     return {"valid": True, "user": user}
 
-def get_current_user(payload=Depends(verify_token)):
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return payload 
+
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
     question = state["input"]
