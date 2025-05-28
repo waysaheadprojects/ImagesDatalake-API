@@ -463,10 +463,12 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
 
         # 🔢 Get next message order
         cursor.execute(
-            "SELECT MAX(message_order) FROM tb_chat_history WHERE session_id = %s",
+            "SELECT MAX(message_order) AS max_order FROM tb_chat_history WHERE session_id = %s",
             (session_id,)
         )
-        last_order = cursor.fetchone()[0] or 0
+        row = cursor.fetchone()
+        last_order = row["max_order"] if row and row["max_order"] is not None else 0
+
         now = datetime.utcnow()
 
         # 🧠 Build user message and run LangGraph agent
