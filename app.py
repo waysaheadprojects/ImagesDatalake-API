@@ -436,7 +436,7 @@ async def get_images(payload: ImageRequest, current_user: dict = Depends(get_cur
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/get_videos")
-async def get_videos(payload: VideoRequest, current_user: dict = Depends(get_current_user))::
+async def get_videos(payload: VideoRequest, current_user: dict = Depends(get_current_user)):
     try:
         return {"videos": fetch_youtube_videos.invoke({"input": payload.question})}
     except Exception as e:
