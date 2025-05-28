@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse , HTMLResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import re, logging, base64
@@ -597,6 +597,35 @@ def verify_token_endpoint(payload=Depends(verify_token)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return {"valid": True, "user": user}
+
+@app.get("/graph", response_class=HTMLResponse)
+async def visualize_graph():
+    try:
+        mermaid_code = graph.get_graph().draw_mermaid()
+
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>LangGraph Visualization</title>
+            <script type="module">
+              import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+              mermaid.initialize({{ startOnLoad: true }});
+            </script>
+        </head>
+        <body style="padding: 2rem; background: #f8f9fa;">
+            <h2>LangGraph Flowchart</h2>
+            <div class="mermaid">
+            {mermaid_code}
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    except Exception as e:
+        return HTMLResponse(content=f"<h3>⚠️ Error generating graph: {e}</h3>", status_code=500)
+
 
 
 # ----------------- Router (for initial tool type classification) -----------------
