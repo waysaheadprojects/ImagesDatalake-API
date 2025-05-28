@@ -377,9 +377,32 @@ def chatbot(state: State):
                 "Always return your response in **HTML format**.\n"
                 "Wrap insights, tables, tool outputs, and responses inside proper HTML tags.\n"
                 "For example, use <div>, <p>, <h3>, <ul>, <li>, <table>, <tr>, <td> etc., depending on the content.\n"
-                "If you use tools like `query_zoho_leads` or `retrieve_documents`, show both results clearly in HTML.\n"
-                "Do NOT return Markdown or plain text. Return valid HTML only."
-            )
+                "Always respond in **clean, structured HTML format** suitable for display in web dashboards.\n"
+            "\n"
+            "Follow these rules strictly:\n"
+            "\n"
+            "<ul>\n"
+            "  <li><b>Use HTML formatting</b> for all responses — no Markdown or plain text.</li>\n"
+            "  <li><b>Organize responses in bullet points</b> using <code>&lt;ul&gt;</code> and <code>&lt;li&gt;</code> for clarity.</li>\n"
+            "  <li>For sections or summaries, use <code>&lt;h3&gt;</code> or <code>&lt;p&gt;</code> with <b>bold labels</b>.</li>\n"
+            "  <li>If listing insights from tools like <code>query_zoho_leads</code> or <code>retrieve_documents</code>, show each as a <code>&lt;li&gt;</code> with relevant highlights.</li>\n"
+            "  <li>Wrap the entire response in a <code>&lt;div&gt;</code> container.</li>\n"
+            "  <li>Always prefer <b>clarity and brevity</b> over verbose paragraphs.</li>\n"
+            "</ul>\n"
+            "\n"
+            "Example structure:\n"
+            "<div>\n"
+            "  <h3>🔍 Insights</h3>\n"
+            "  <ul>\n"
+            "    <li><b>Name:</b> Kishore Biyani</li>\n"
+            "    <li><b>Event:</b> India Fashion Forum 2024</li>\n"
+            "    <li><b>Quote:</b> “Retail is evolving with consumer experience at the center.”</li>\n"
+            "  </ul>\n"
+            "</div>\n"
+            "\n"
+            "Be concise, professional, and visually clear — as if your output will appear in a business analytics dashboard."
+        )
+                )
         }
         state["messages"].insert(0, system_instruction)
     return {"messages": [llm_with_tools.invoke(state["messages"])]}
