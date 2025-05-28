@@ -617,12 +617,15 @@ def login(request_data: LoginRequest, request: Request):
         if request_data.password != user["password"]:
             login_reason = "Invalid password"
             raise HTTPException(status_code=401, detail="Invalid email or password")
-
-        # ✅ Create JWT token
+       # login route
         login_token = create_access_token(
-            data={"sub": request_data.email},
+            data={
+                "sub": request_data.email,
+                "user_key": str(user["user_key"])
+            },
             expires_delta=timedelta(minutes=60)
         )
+
         login_status = "Success"
         login_reason = "Login successful"
 
