@@ -752,37 +752,50 @@ async def visualize_graph():
 
 
 @app.get("/user-chats")
-def get_all_chats_for_user(
-    user_key: int = Query(..., description="User key to fetch all chat messages")
+def get_chat_sessions_for_user(
+    user_key: int = Query(..., description="User key to fetch chat sessions")
 ):
     """
-    Returns all chat messages for a user, ordered by created_at.
+    Returns a list of unique chat sessions (threads) for a user.
 
-    Each message includes session_id to know which thread it belongs to.
+    Each session includes:
+    - session_id
+    - first_message (optional)
+    - last_message (optional)
+    - total messages
+    - last updated timestamp
     """
     try:
         cursor = db.get_cursor()
         cursor.execute("""
-            SELECT session_id, message_order, message_role, message_text, message_html, tool_used, created_at
-            FROM tb_chat_history
+            SELECT 
+                session_id,
+                COUNT(*) as message_count,
+                MIN(created_at) as started_at,
+                MAX(created_at) as last_updated,
+                MAX(message_text) FILTER (WHERE message_order = (
+                    SELECT MAX(message_order) 
+                    FROM tb_chat_history t2 
+                    WHERE t2.session_id = t1.session_id
+                )) AS last_message
+            FROM tb_chat_history t1
             WHERE user_key = %s AND is_deleted = false
-            ORDER BY created_at ASC;
+            GROUP BY session_id
+            ORDER BY last_updated DESC;
         """, (user_key,))
         rows = cursor.fetchall()
 
-        chats = [
+        sessions = [
             {
                 "session_id": row["session_id"],
-                "order": row["message_order"],
-                "role": row["message_role"],
-                "text": row["message_text"],
-                "html": row["message_html"],
-                "tool_used": row["tool_used"],
-                "created_at": row["created_at"].isoformat()
+                "message_count": row["message_count"],
+                "started_at": row["started_at"].isoformat(),
+                "last_updated": row["last_updated"].isoformat(),
+                "last_message": row["last_message"]
             }
             for row in rows
         ]
-        return {"chats": chats}
+        return {"sessions": sessions}
 
     except Exception as e:
         import traceback
