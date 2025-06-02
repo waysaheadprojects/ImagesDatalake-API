@@ -439,13 +439,6 @@ import logging
 
 @app.post("/ask")
 async def ask(payload: AskRequest, request: Request, current_user: dict = Depends(get_current_user)):
-    """
-    LangGraph-powered assistant with chat history memory and HTML-formatted responses.
-
-    - Loads session memory from DB on resume
-    - Injects system prompt for HTML output
-    - Stores both user and assistant messages
-    """
     try:
         session_id = (
             request.query_params.get("session_id")
@@ -458,7 +451,6 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
 
         cursor = db.get_cursor()
 
-        # 🔢 Get last message order
         cursor.execute("""
             SELECT MAX(message_order) AS max_order
             FROM tb_chat_history
@@ -468,7 +460,6 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         last_order = row["max_order"] if row and row["max_order"] is not None else 0
         now = datetime.utcnow()
 
-        # ✅ Rehydrate memory from DB
         cursor.execute("""
             SELECT message_role, message_text
             FROM tb_chat_history
@@ -478,7 +469,6 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         rows = cursor.fetchall()
         history = [{"role": r["message_role"], "content": r["message_text"]} for r in rows]
 
-        # ✅ System prompt for HTML responses
         system_instruction = {
             "role": "system",
             "content": (
@@ -494,21 +484,17 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         user_message = {"role": "user", "content": payload.question}
         full_messages = [system_instruction] + history + [user_message]
 
-        # 🤖 Invoke LangGraph
         result = graph.invoke(
             {"messages": full_messages},
             config={"configurable": {"thread_id": session_id}}
         )
         assistant_msg = result["messages"][-1]
-
-        # 🛠 Tool detection
         tool_used = getattr(assistant_msg, "tool_call", None)
         if isinstance(tool_used, dict):
             tool_used = tool_used.get("name", "chat")
         if not tool_used:
             tool_used = "chat"
 
-        # 💾 Store user message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
@@ -520,11 +506,10 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
                     true, false, %s, %s)
         """, (
             session_id, user_key, last_order + 1,
-            "user", payload.question, "chat",
+            "user", payload.question, tool_used,
             now, now
         ))
 
-        # 💾 Store assistant message
         cursor.execute("""
             INSERT INTO tb_chat_history (
                 interaction_key, session_id, user_key, message_order,
@@ -541,12 +526,12 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
         ))
 
         db.connection.commit()
-        return {"answer": assistant_msg.content}
+        return {"status": True, "answer": assistant_msg.content}
 
     except Exception as e:
         logging.error("❌ /ask failed:\n" + traceback.format_exc())
         db.connection.rollback()
-        return JSONResponse(status_code=500, content={"error": traceback.format_exc()})
+        return JSONResponse(status_code=500, content={"status": False, "error": traceback.format_exc()})
 
 
 
@@ -554,16 +539,21 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
 @app.post("/get_images")
 async def get_images(payload: ImageRequest, current_user: dict = Depends(get_current_user)):
     try:
-        return {"images": detect_people_and_images.invoke({"input": payload.answer})}
+        images = detect_people_and_images.invoke({"input": payload.answer})
+        return {"status": True, "images": images}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logging.error(f"/get_images failed: {e}")
+        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
 
 @app.post("/get_videos")
 async def get_videos(payload: VideoRequest, current_user: dict = Depends(get_current_user)):
     try:
-        return {"videos": fetch_youtube_videos.invoke({"input": payload.question})}
+        videos = fetch_youtube_videos.invoke({"input": payload.question})
+        return {"status": True, "videos": videos}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logging.error(f"/get_videos failed: {e}")
+        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
 
 @app.post("/get_sources")
 async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_current_user)):
@@ -571,11 +561,11 @@ async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_c
         question = payload.question.strip()
 
         if not vector_store:
-            return JSONResponse(status_code=500, content={"error": "FAISS vector store not initialized."})
+            return JSONResponse(status_code=500, content={"status": False, "error": "FAISS vector store not initialized."})
 
         docs = vector_store.similarity_search(question, k=10)
         if not docs:
-            return {"sources": []}
+            return {"status": True, "sources": []}
 
         seen = {}
         for doc in docs:
@@ -592,11 +582,12 @@ async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_c
             else:
                 seen[source]["snippet"] += "\n\n" + re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'\1', doc.page_content.strip())
 
-        return {"sources": list(seen.values())}
+        return {"status": True, "sources": list(seen.values())}
 
     except Exception as e:
         logging.error(f"/get_sources failed: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
 
 @app.post("/get_insights")
 async def get_insights(payload: InsightRequest, current_user: dict = Depends(get_current_user)):
@@ -604,17 +595,14 @@ async def get_insights(payload: InsightRequest, current_user: dict = Depends(get
         question = payload.question.strip()
         answer = payload.answer.strip()
 
-        # 🖼️ People detection
         people = detect_people_and_images.invoke({"input": answer})
         num_people = len(people)
         num_with_local = sum(1 for p in people if p["local_photos"])
 
-        # 📄 Document insights
         docs = vector_store.similarity_search(question, k=10)
         unique_files = list({doc.metadata.get("file_name", "unknown") for doc in docs})
         top_sources = unique_files[:5]
 
-        # 🔢 Document DB stats
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor()
         cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME}")
@@ -625,11 +613,11 @@ async def get_insights(payload: InsightRequest, current_user: dict = Depends(get
         cursor.close()
         conn.close()
 
-        # 🧠 Answer from doc search
         doc_answer = retrieve_documents.invoke({"input": question})
         top_snippets = [doc.page_content[:150] + "..." for doc in docs[:3]]
 
         return {
+            "status": True,
             "summary": {
                 "total_documents_indexed": total_docs,
                 "total_images_available": total_images,
@@ -646,7 +634,8 @@ async def get_insights(payload: InsightRequest, current_user: dict = Depends(get
 
     except Exception as e:
         logging.error(f"/get_insights failed: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
 
 db = Database()
 
@@ -669,7 +658,7 @@ def login(request_data: LoginRequest, request: Request):
         if request_data.password != user["password"]:
             login_reason = "Invalid password"
             raise HTTPException(status_code=401, detail="Invalid email or password")
-       # login route
+
         login_token = create_access_token(
             data={
                 "sub": request_data.email,
@@ -681,7 +670,6 @@ def login(request_data: LoginRequest, request: Request):
         login_status = "Success"
         login_reason = "Login successful"
 
-        # ✅ Insert login log
         ip_address = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
 
@@ -696,6 +684,7 @@ def login(request_data: LoginRequest, request: Request):
         db.connection.commit()
 
         return {
+            "status": True,
             "access_token": login_token,
             "user": user,
             "token_type": "bearer"
@@ -705,7 +694,7 @@ def login(request_data: LoginRequest, request: Request):
         raise e
     except Exception as e:
         logging.error(f"🚨 Error in /login: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
 
 
 
@@ -748,23 +737,10 @@ async def visualize_graph():
         return HTMLResponse(content=f"<h3>⚠️ Error generating graph: {e}</h3>", status_code=500)
 
 
-
-
-
 @app.get("/user-chats")
 def get_chat_sessions_for_user(
     user_key: int = Query(..., description="User key to fetch chat sessions")
 ):
-    """
-    Returns a list of unique chat sessions (threads) for a user.
-
-    Each session includes:
-    - session_id
-    - first_message (optional)
-    - last_message (optional)
-    - total messages
-    - last updated timestamp
-    """
     try:
         cursor = db.get_cursor()
         cursor.execute("""
@@ -773,11 +749,15 @@ def get_chat_sessions_for_user(
                 COUNT(*) as message_count,
                 MIN(created_at) as started_at,
                 MAX(created_at) as last_updated,
-                MAX(message_text) FILTER (WHERE message_order = (
-                    SELECT MAX(message_order) 
+                (
+                    SELECT message_text 
                     FROM tb_chat_history t2 
-                    WHERE t2.session_id = t1.session_id
-                )) AS last_message
+                    WHERE t2.session_id = t1.session_id 
+                      AND t2.user_key = t1.user_key
+                      AND is_deleted = false
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) AS last_message
             FROM tb_chat_history t1
             WHERE user_key = %s AND is_deleted = false
             GROUP BY session_id
@@ -795,12 +775,13 @@ def get_chat_sessions_for_user(
             }
             for row in rows
         ]
-        return {"sessions": sessions}
+        return {"status": True, "sessions": sessions}
 
     except Exception as e:
         import traceback
         logging.error(traceback.format_exc())
-        return JSONResponse(status_code=500, content={"error": traceback.format_exc()})
+        return JSONResponse(status_code=500, content={"status": False, "error": traceback.format_exc()})
+
 
 
 
