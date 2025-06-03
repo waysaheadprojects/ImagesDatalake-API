@@ -744,27 +744,7 @@ async def visualize_graph():
 
 
 @app.get("/user-chats")
-def get_chat_sessions_for_user(
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    🔐 Secured: Returns all chat session threads for the logged-in user.
-
-    Response:
-    {
-        "status": true,
-        "sessions": [
-            {
-                "session_id": "...",
-                "message_count": ...,
-                "started_at": "...",
-                "last_updated": "...",
-                "last_message": "..."
-            },
-            ...
-        ]
-    }
-    """
+def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
     try:
         user_key = current_user.get("user_key")
         if not user_key:
@@ -807,8 +787,12 @@ def get_chat_sessions_for_user(
 
     except Exception as e:
         import traceback
+        db.connection.rollback()  # 👈 VERY IMPORTANT
         logging.error(traceback.format_exc())
-        return JSONResponse(status_code=500, content={"status": False, "error": traceback.format_exc()})
+        return JSONResponse(
+            status_code=500,
+            content={"status": False, "error": traceback.format_exc()}
+        )
 
 
 
