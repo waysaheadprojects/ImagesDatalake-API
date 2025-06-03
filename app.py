@@ -653,10 +653,12 @@ def login(request_data: LoginRequest, request: Request):
 
         if not user:
             login_reason = "User not found"
+            db.connection.rollback()  # 👈 prevent broken transaction
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
         if request_data.password != user["password"]:
             login_reason = "Invalid password"
+            db.connection.rollback()  # 👈 prevent broken transaction
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
         login_token = create_access_token(
@@ -681,6 +683,7 @@ def login(request_data: LoginRequest, request: Request):
             user.get("user_key"), request_data.email, login_token,
             login_status, login_reason, ip_address, user_agent
         ))
+
         db.connection.commit()
 
         return {
@@ -691,10 +694,13 @@ def login(request_data: LoginRequest, request: Request):
         }
 
     except HTTPException as e:
+        db.connection.rollback()  # 👈 safe rollback
         raise e
     except Exception as e:
+        db.connection.rollback()  # 👈 rollback on unknown errors
         logging.error(f"🚨 Error in /login: {e}")
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
 
 
 
