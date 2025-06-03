@@ -760,14 +760,13 @@ def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
                 (
                     SELECT message_text 
                     FROM tb_chat_history t2 
-                    WHERE t2.session_id = t1.session_id 
-                      AND t2.user_key = t1.user_key
-                      AND is_deleted = false
+                    WHERE t2.session_id = t1.session_id
+                      AND t2.is_deleted = false
                     ORDER BY created_at DESC
                     LIMIT 1
                 ) AS last_message
             FROM tb_chat_history t1
-            WHERE user_key = %s AND is_deleted = false
+            WHERE t1.user_key = %s AND t1.is_deleted = false
             GROUP BY session_id
             ORDER BY last_updated DESC;
         """, (user_key,))
@@ -787,15 +786,9 @@ def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
 
     except Exception as e:
         import traceback
-        db.connection.rollback()  # 👈 VERY IMPORTANT
+        db.connection.rollback()
         logging.error(traceback.format_exc())
-        return JSONResponse(
-            status_code=500,
-            content={"status": False, "error": traceback.format_exc()}
-        )
-
-
-
+        return JSONResponse(status_code=500, content={"status": False, "error": traceback.format_exc()})
 
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
