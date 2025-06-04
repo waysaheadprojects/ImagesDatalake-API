@@ -793,7 +793,7 @@ def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
  # Assuming these are your DB and auth dependencies
 
 @app.get("/user-chat-history")
-def get_chat_history_for_user(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_chat_history_for_user(current_user: dict = Depends(get_current_user)):
     """
     Fetches all chat history for a specific user, including created_at, message details, and user_name.
 
