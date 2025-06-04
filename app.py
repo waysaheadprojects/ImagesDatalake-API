@@ -795,6 +795,7 @@ def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
 @app.get("/user-chat-history")
 def get_chat_history_for_user(
     current_user: dict = Depends(get_current_user), 
+    db: Database = Depends(get_db),  # Assuming `db` is the custom Database class
     role: str = Query(None, description="Filter messages by 'user' or 'assistant'")
 ):
     """
@@ -814,44 +815,50 @@ def get_chat_history_for_user(
             raise HTTPException(status_code=401, detail="Unauthorized: Missing user_key")
 
         # Fetch user name from the user table (tb_dim_user)
-        user = db.query(User).filter(User.user_key == user_key).first()  # Assuming `User` is defined as an ORM model
-        user_name = user.full_name if user else "Unknown User"
+        cursor = db.get_cursor()  # Get cursor from your custom DB class
+        cursor.execute("""
+            SELECT full_name FROM public.tb_dim_user WHERE user_key = %s
+        """, (user_key,))
+        user = cursor.fetchone()
+        user_name = user["full_name"] if user else "Unknown User"
 
         # Build the base query for fetching chat history
-        query = db.query(ChatHistory).filter(
-            ChatHistory.user_key == user_key,
-            ChatHistory.is_deleted == False
-        )
+        query = db.get_cursor().execute("""
+            SELECT session_id, message_order, message_role, message_text, created_at 
+            FROM public.tb_chat_history
+            WHERE user_key = %s AND is_deleted = false
+        """, (user_key,))
 
         # Apply filter if a role is provided
         if role:
             if role not in ["user", "assistant"]:
                 raise HTTPException(status_code=400, detail="Invalid role filter. Use 'user' or 'assistant'.")
-            query = query.filter(ChatHistory.message_role == role)
+            query = query.filter("message_role == role")
 
         # Fetch chat history for the user, ordered by created_at (latest first)
-        chat_history = query.order_by(ChatHistory.created_at.desc()).all()
+        cursor.execute(query.order_by("created_at desc"))
 
         # Format the chat history for the response
         chats = [
             {
-                "session_id": chat.session_id,
-                "message_order": chat.message_order,
-                "message_role": chat.message_role,
-                "message_text": chat.message_text,
-                "created_at": chat.created_at.isoformat(),
+                "session_id": row["session_id"],
+                "message_order": row["message_order"],
+                "message_role": row["message_role"],
+                "message_text": row["message_text"],
+                "created_at": row["created_at"].isoformat(),
                 "user_name": user_name
             }
-            for chat in chat_history
+            for row in query
         ]
 
         return {"status": True, "chats": chats}
 
     except Exception as e:
-        import traceback
-        db.rollback()  # Ensure rollback in case of errors
-        logging.error(traceback.format_exc())
-        return JSONResponse(status_code=500, content={"status": False, "error": traceback.format_exc()})
+        # Rollback on any exception to ensure no partial commits
+        db.connection.rollback()
+        logging.error(f"❌ Error fetching chat history: {e}")
+        traceback.format_exc()
+        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
 
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
