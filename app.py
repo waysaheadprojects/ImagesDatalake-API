@@ -790,6 +790,66 @@ def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
         logging.error(traceback.format_exc())
         return JSONResponse(status_code=500, content={"status": False, "error": traceback.format_exc()})
 
+ # Assuming these are your DB and auth dependencies
+
+@app.get("/user-chat-history")
+def get_chat_history_for_user(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Fetches all chat history for a specific user, including created_at, message details, and user_name.
+
+    Returns:
+    - status: True/False
+    - chats: List of messages with user_name and timestamps
+    """
+    try:
+        user_key = current_user.get("user_key")
+        if not user_key:
+            raise HTTPException(status_code=401, detail="Unauthorized: Missing user_key")
+
+        cursor = db.get_cursor()
+
+        # Fetch user name from the user table (tb_dim_user)
+        cursor.execute("""
+            SELECT full_name FROM public.tb_dim_user WHERE user_key = %s
+        """, (user_key,))
+        user = cursor.fetchone()
+        user_name = user["full_name"] if user else "Unknown User"
+
+        # Fetch chat history for the user
+        cursor.execute("""
+            SELECT 
+                session_id, 
+                message_order, 
+                message_role, 
+                message_text, 
+                created_at 
+            FROM public.tb_chat_history
+            WHERE user_key = %s AND is_deleted = false
+            ORDER BY created_at ASC;
+        """, (user_key,))
+        rows = cursor.fetchall()
+
+        chats = [
+            {
+                "session_id": row["session_id"],
+                "message_order": row["message_order"],
+                "message_role": row["message_role"],
+                "message_text": row["message_text"],
+                "created_at": row["created_at"].isoformat(),
+                "user_name": user_name
+            }
+            for row in rows
+        ]
+
+        return {"status": True, "chats": chats}
+
+    except Exception as e:
+        import traceback
+        db.connection.rollback()  # Make sure to rollback in case of errors
+        logging.error(traceback.format_exc())
+        return JSONResponse(status_code=500, content={"status": False, "error": traceback.format_exc()})
+
+
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
     question = state["input"]
