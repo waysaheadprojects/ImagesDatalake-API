@@ -822,20 +822,23 @@ def get_chat_history_for_user(
         user_name = user["full_name"] if user else "Unknown User"
 
         # Build the base query for fetching chat history
-        query = db.get_cursor().execute("""
+        query = """
             SELECT session_id, message_order, message_role, message_text, created_at 
             FROM public.tb_chat_history
             WHERE user_key = %s AND is_deleted = false
-        """, (user_key,))
-
+        """
+        
         # Apply filter if a role is provided
         if role:
             if role not in ["user", "assistant"]:
                 raise HTTPException(status_code=400, detail="Invalid role filter. Use 'user' or 'assistant'.")
-            query = query.filter("message_role == role")
+            query += " AND message_role = %s"
+            cursor.execute(query, (user_key, role))
+        else:
+            cursor.execute(query, (user_key,))
 
-        # Fetch chat history for the user, ordered by created_at (latest first)
-        cursor.execute(query.order_by("created_at desc"))
+        # Fetch the results
+        rows = cursor.fetchall()
 
         # Format the chat history for the response
         chats = [
@@ -847,7 +850,7 @@ def get_chat_history_for_user(
                 "created_at": row["created_at"].isoformat(),
                 "user_name": user_name
             }
-            for row in query
+            for row in rows
         ]
 
         return {"status": True, "chats": chats}
@@ -858,7 +861,6 @@ def get_chat_history_for_user(
         logging.error(f"❌ Error fetching chat history: {e}")
         traceback.format_exc()
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
-
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
     question = state["input"]
