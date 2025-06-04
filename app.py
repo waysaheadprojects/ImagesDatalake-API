@@ -793,10 +793,17 @@ def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
  # Assuming these are your DB and auth dependencies
 
 @app.get("/user-chat-history")
-def get_chat_history_for_user(current_user: dict = Depends(get_current_user)):
+def get_chat_history_for_user(
+    current_user: dict = Depends(get_current_user), 
+    role: str = Query(None, description="Filter messages by 'user' or 'assistant'")
+):
     """
-    Fetches all chat history for a specific user, including created_at, message details, and user_name.
-
+    Fetches all chat history for a specific user with the option to filter by role (user or assistant).
+    
+    - If 'user' is passed, only user messages are returned.
+    - If 'assistant' is passed, only assistant messages are returned.
+    - If no filter is provided, all messages are returned, sorted by created_at (latest first).
+    
     Returns:
     - status: True/False
     - chats: List of messages with user_name and timestamps
@@ -806,49 +813,45 @@ def get_chat_history_for_user(current_user: dict = Depends(get_current_user)):
         if not user_key:
             raise HTTPException(status_code=401, detail="Unauthorized: Missing user_key")
 
-        cursor = db.get_cursor()
-
         # Fetch user name from the user table (tb_dim_user)
-        cursor.execute("""
-            SELECT full_name FROM public.tb_dim_user WHERE user_key = %s
-        """, (user_key,))
-        user = cursor.fetchone()
-        user_name = user["full_name"] if user else "Unknown User"
+        user = db.query(User).filter(User.user_key == user_key).first()  # Assuming `User` is defined as an ORM model
+        user_name = user.full_name if user else "Unknown User"
 
-        # Fetch chat history for the user
-        cursor.execute("""
-            SELECT 
-                session_id, 
-                message_order, 
-                message_role, 
-                message_text, 
-                created_at 
-            FROM public.tb_chat_history
-            WHERE user_key = %s AND is_deleted = false
-            ORDER BY created_at ASC;
-        """, (user_key,))
-        rows = cursor.fetchall()
+        # Build the base query for fetching chat history
+        query = db.query(ChatHistory).filter(
+            ChatHistory.user_key == user_key,
+            ChatHistory.is_deleted == False
+        )
 
+        # Apply filter if a role is provided
+        if role:
+            if role not in ["user", "assistant"]:
+                raise HTTPException(status_code=400, detail="Invalid role filter. Use 'user' or 'assistant'.")
+            query = query.filter(ChatHistory.message_role == role)
+
+        # Fetch chat history for the user, ordered by created_at (latest first)
+        chat_history = query.order_by(ChatHistory.created_at.desc()).all()
+
+        # Format the chat history for the response
         chats = [
             {
-                "session_id": row["session_id"],
-                "message_order": row["message_order"],
-                "message_role": row["message_role"],
-                "message_text": row["message_text"],
-                "created_at": row["created_at"].isoformat(),
+                "session_id": chat.session_id,
+                "message_order": chat.message_order,
+                "message_role": chat.message_role,
+                "message_text": chat.message_text,
+                "created_at": chat.created_at.isoformat(),
                 "user_name": user_name
             }
-            for row in rows
+            for chat in chat_history
         ]
 
         return {"status": True, "chats": chats}
 
     except Exception as e:
         import traceback
-        db.connection.rollback()  # Make sure to rollback in case of errors
+        db.rollback()  # Ensure rollback in case of errors
         logging.error(traceback.format_exc())
         return JSONResponse(status_code=500, content={"status": False, "error": traceback.format_exc()})
-
 
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
