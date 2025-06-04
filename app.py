@@ -795,6 +795,7 @@ def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
 @app.get("/user-chat-history")
 def get_chat_history_for_user(
     current_user: dict = Depends(get_current_user), 
+    db: Database = Depends(get_db),  # Assuming `db` is the custom Database class
     role: str = Query(None, description="Filter messages by 'user' or 'assistant'")
 ):
     """
@@ -837,7 +838,7 @@ def get_chat_history_for_user(
         else:
             cursor.execute(query, (user_key,))
 
-        # Fetch the results
+        # Fetch the results, ordered by created_at DESC (latest first)
         rows = cursor.fetchall()
 
         # Format the chat history for the response
