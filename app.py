@@ -255,7 +255,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         return []
         
 @tool
-def get_images_from_text(input: str) -> list:
+def detect_people_and_images(input: str) -> list:
     """
     🖼️ Image Finder Tool with Google Custom Search (CSE)
 
