@@ -860,8 +860,7 @@ def get_chat_history_for_user(
         # Build the base query for fetching chat history
         query = """
             SELECT session_id, message_order, message_role, message_text, created_at 
-            FROM public.tb_chat_history
-            WHERE user_key = %s AND is_deleted = false
+            FROM public.tb_chat_history WHERE is_deleted = false
         """
         
         # Apply filter if a role is provided
