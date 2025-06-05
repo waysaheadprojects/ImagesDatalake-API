@@ -294,6 +294,7 @@ def get_images_from_text(input: str) -> list:
         return entities[:5]
 
     def fetch_google_images(query: str, limit: int = 2) -> list:
+        from googleapiclient.discovery import build
         api_key = os.getenv("GOOGLE_CSE_API_KEY")
         cx = os.getenv("GOOGLE_CSE_CX")
         images = []
