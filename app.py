@@ -900,12 +900,14 @@ def route_tool(state):
     - retrieve_documents
     - fetch_youtube_videos
     - detect_people_and_images
+    - get_attendee_images
 
     Guidelines:
     - For event attendees, emails, participant info → query_zoho_leads
     - For quotes, mentions, descriptions from magazines/articles → retrieve_documents
     - For videos (e.g., PRC, IFF, conferences) → fetch_youtube_videos
     - For people image search (based on answer) → detect_people_and_images
+    - For showing images use -> get_attendee_images
 
     ONLY output the tool name.
     """
