@@ -255,47 +255,71 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         return []
         
 @tool
-def detect_people_and_images(input: str) -> List[dict]:
+def get_images_from_text(input: str) -> list:
     """
-    🧠 Detects PERSON and ORG entities from input text and returns:
-    - Base64-encoded local photo (fuzzy match using pg_trgm similarity > 0.3)
-    - Safe web fallback photos from DuckDuckGo
-    - Entity type (person or brand/org)
-    - Matched title (if any)
+    🖼️ Image Finder Tool with Google Custom Search (CSE)
 
-    Returns:
-        List[dict]: List of entities with base64 local and safe web image links.
+    Extracts PERSON and ORG names from HTML or text input using spaCy transformers,
+    then returns relevant images from PostgreSQL and Google Image Search fallback.
     """
-    # --- Helper to clean input ---
+    DB_CONFIG = {
+        "host": os.getenv("POSTGRES_HOST"),
+        "port": int(os.getenv("POSTGRES_PORT", "5432")),
+        "dbname": os.getenv("POSTGRES_DB"),
+        "user": os.getenv("POSTGRES_USER"),
+        "password": os.getenv("POSTGRES_PASSWORD")
+    }
+
     def extract_plain_text(text: str) -> str:
         try:
             return BeautifulSoup(text, "html.parser").get_text(separator=" ").strip()
         except Exception:
-            return re.sub("<[^>]+>", "", text)
+            return re.sub(r"<[^>]+>", "", text)
+
+    def extract_entities(text: str):
+        doc = nlp(text)
+        entities = []
+        for ent in doc.ents:
+            if ent.label_ not in {"PERSON", "ORG"}:
+                continue
+            if len(ent) < 2:
+                continue
+            if not any(t.is_alpha for t in ent):
+                continue
+            if not ent[0].text.istitle():
+                continue
+            if ent.text.strip().lower() in {"co founder", "founder", "ceo"}:
+                continue
+            entities.append((ent.text.strip(), ent.label_))
+        return entities[:5]
+
+    def fetch_google_images(query: str, limit: int = 2) -> list:
+        api_key = os.getenv("GOOGLE_CSE_API_KEY")
+        cx = os.getenv("GOOGLE_CSE_CX")
+        images = []
+        try:
+            service = build("customsearch", "v1", developerKey=api_key)
+            res = service.cse().list(
+                q=query,
+                cx=cx,
+                searchType="image",
+                num=limit,
+                safe="high",
+                fileType="jpg",
+                imgType="face"
+            ).execute()
+            for item in res.get("items", []):
+                link = item.get("link", "")
+                if link and link.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                    images.append(link)
+        except Exception as e:
+            logging.warning(f"⚠️ Google CSE failed for '{query}': {e}")
+        return images or ["https://upload.wikimedia.org/wikipedia/commons/8/89/Portrait_Placeholder.png"]
 
     clean_text = extract_plain_text(input)
-    doc = nlp(clean_text)
-
-    entities = [(ent.text.strip(), ent.label_) for ent in doc.ents if ent.label_ in {"PERSON", "ORG"}]
-    entities = entities[:5]  # 🚦 Limit for performance
-
+    entities = extract_entities(clean_text)
     seen = set()
     results = []
-
-    SAFE_IMAGE_DOMAINS = [
-        "wikipedia.org", "wikimedia.org", "linkedin.com", "staticflickr.com", "gettyimages.com",
-        "bbc.co.uk", "nytimes.com", "forbes.com", "bloomberg.com", "reuters.com", "cnn.com"
-    ]
-    IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
-    BLACKLISTED_DOMAINS = ["porn", "sex", "adult", "xxx", "erotic", "nsfw"]
-
-    def is_safe_image(url):
-        url_l = url.lower()
-        return (
-            url_l.startswith("http") and
-            any(url_l.endswith(ext) for ext in IMAGE_EXTENSIONS) and
-            not any(bad in url_l for bad in BLACKLISTED_DOMAINS)
-        )
 
     for name, label in entities:
         norm_name = name.lower()
@@ -306,6 +330,7 @@ def detect_people_and_images(input: str) -> List[dict]:
         matched_title = "N/A"
         local_photos = []
 
+        # 🔍 PostgreSQL Fuzzy Match
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
@@ -319,28 +344,14 @@ def detect_people_and_images(input: str) -> List[dict]:
             row = cursor.fetchone()
             cursor.close()
             conn.close()
-
-            if row and len(row) == 2:
+            if row and row[1]:
                 matched_title, base64_img = row
-                if base64_img:
-                    local_photos = [f"data:image/jpeg;base64,{base64_img}"]
+                local_photos = [f"data:image/jpeg;base64,{base64_img}"]
         except Exception as e:
             logging.warning(f"⚠️ DB lookup failed for '{name}': {e}")
 
-        web_photos = []
-        try:
-            with DDGS() as ddgs:
-                for r in ddgs.images(name, max_results=10):
-                    img_url = r.get("image", "")
-                    if is_safe_image(img_url):
-                        web_photos.append(img_url)
-                    if len(web_photos) >= 3:
-                        break
-        except Exception as e:
-            logging.warning(f"⚠️ DuckDuckGo fallback failed for '{name}': {e}")
-
-        if not web_photos:
-            web_photos = ["https://upload.wikimedia.org/wikipedia/commons/8/89/Portrait_Placeholder.png"]
+        # 🌐 Google Image Search Fallback
+        web_photos = fetch_google_images(name, limit=2)
 
         results.append({
             "name": name,
