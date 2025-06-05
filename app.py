@@ -253,6 +253,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
     except Exception as e:
         logging.error(f"YT API error: {e}")
         return []
+        
 @tool
 def detect_people_and_images(input: str) -> List[dict]:
     """
@@ -265,8 +266,18 @@ def detect_people_and_images(input: str) -> List[dict]:
     Returns:
         List[dict]: List of entities with base64 local and safe web image links.
     """
-    doc = nlp(input)
+    # --- Helper to clean input ---
+    def extract_plain_text(text: str) -> str:
+        try:
+            return BeautifulSoup(text, "html.parser").get_text(separator=" ").strip()
+        except Exception:
+            return re.sub("<[^>]+>", "", text)
+
+    clean_text = extract_plain_text(input)
+    doc = nlp(clean_text)
+
     entities = [(ent.text.strip(), ent.label_) for ent in doc.ents if ent.label_ in {"PERSON", "ORG"}]
+    entities = entities[:5]  # 🚦 Limit for performance
 
     seen = set()
     results = []
@@ -295,7 +306,6 @@ def detect_people_and_images(input: str) -> List[dict]:
         matched_title = "N/A"
         local_photos = []
 
-        # ✅ Fuzzy match from PostgreSQL using pg_trgm similarity
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
@@ -315,9 +325,8 @@ def detect_people_and_images(input: str) -> List[dict]:
                 if base64_img:
                     local_photos = [f"data:image/jpeg;base64,{base64_img}"]
         except Exception as e:
-            logging.warning(f"⚠️ Fuzzy DB lookup failed for '{name}': {e}")
+            logging.warning(f"⚠️ DB lookup failed for '{name}': {e}")
 
-        # 🌐 Web fallback via DuckDuckGo
         web_photos = []
         try:
             with DDGS() as ddgs:
@@ -332,7 +341,6 @@ def detect_people_and_images(input: str) -> List[dict]:
 
         if not web_photos:
             web_photos = ["https://upload.wikimedia.org/wikipedia/commons/8/89/Portrait_Placeholder.png"]
-
 
         results.append({
             "name": name,
