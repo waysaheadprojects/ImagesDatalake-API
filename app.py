@@ -55,7 +55,7 @@ class InsightRequest(BaseModel):
     answer: str
 
 # ----------------- Globals -----------------
-nlp = spacy.load("en_core_web_sm")
+nlp = spacy.load("en_core_web_trf")
 FAISS_INDEX_PATH = "faiss_index"
 TABLE_NAME = "tb_vector_embeddings"
 
