@@ -344,6 +344,34 @@ def detect_people_and_images(input: str) -> List[dict]:
 
     return results
 
+@tool
+def get_attendee_images(event_name: str) -> List[dict]:
+    """
+    🧠 Combined Tool: Finds people who attended a specific event (e.g., PRC 2025),
+    then fetches their images from the image DB or DuckDuckGo.
+
+    Args:
+        event_name (str): Name of the event, e.g., "PRC 2025"
+
+    Returns:
+        List[dict]: One entry per person with their image data.
+    """
+    # Step 1: Get people from Zoho CRM
+    leads = query_zoho_leads.invoke(event_name)
+    names = []
+    for item in leads:
+        match = re.match(r"^(.+?)\s+\(.*?\)\s+from", item["response"])
+        if match:
+            names.append(match.group(1))
+
+    # Step 2: Get images
+    if not names:
+        return [{"error": "No attendees found"}]
+    
+    name_input = ", ".join(names)
+    return get_images_from_text.invoke({"input": name_input})
+
+
 
 
 # ----------------- LangGraph Agent Setup -----------------
@@ -356,7 +384,7 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
 # Define your tools
-tools = [query_zoho_leads, retrieve_documents, fetch_youtube_videos, detect_people_and_images]
+tools = [query_zoho_leads, retrieve_documents, fetch_youtube_videos, get_attendee_images]
 
 # Bind tools to the LLM (no system_prompt here)
 llm = ChatOpenAI(model="gpt-4o-mini-2024-07-18", temperature=0)
