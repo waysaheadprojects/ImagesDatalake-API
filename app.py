@@ -369,7 +369,7 @@ def get_attendee_images(event_name: str) -> List[dict]:
         return [{"error": "No attendees found"}]
     
     name_input = ", ".join(names)
-    return get_images_from_text.invoke({"input": name_input})
+    return detect_people_and_images.invoke({"input": name_input})
 
 
 
