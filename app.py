@@ -830,12 +830,12 @@ def get_chat_sessions_for_user(current_user: dict = Depends(get_current_user)):
 
 @app.get("/user-chat-history")
 def get_chat_history_for_user(
-    current_user: dict = Depends(get_current_user), 
     role: str = Query(None, description="Filter messages by 'user' or 'assistant'")
 ):
     """
-    Fetches all chat history for a specific user with the option to filter by role (user or assistant).
+    Admin view: Fetches all chat history across users.
     
+    Optional:
     - If 'user' is passed, only user messages are returned.
     - If 'assistant' is passed, only assistant messages are returned.
     - If no filter is provided, all messages are returned, sorted by created_at (latest first).
@@ -845,37 +845,34 @@ def get_chat_history_for_user(
     - chats: List of messages with user_name and timestamps
     """
     try:
-        user_key = current_user.get("user_key")
-        if not user_key:
-            raise HTTPException(status_code=401, detail="Unauthorized: Missing user_key")
+        cursor = db.get_cursor()
 
-        # Fetch user name from the user table (tb_dim_user)
-        cursor = db.get_cursor()  # Get cursor from your custom DB class
-        cursor.execute("""
-            SELECT full_name FROM public.tb_dim_user WHERE user_key = %s
-        """, (user_key,))
-        user = cursor.fetchone()
-        user_name = user["full_name"] if user else "Unknown User"
-
-        # Build the base query for fetching chat history
+        # Base query
         query = """
-            SELECT session_id, message_order, message_role, message_text, created_at 
-            FROM public.tb_chat_history WHERE is_deleted = false
+            SELECT 
+                ch.session_id, 
+                ch.message_order, 
+                ch.message_role, 
+                ch.message_text, 
+                ch.created_at, 
+                u.full_name
+            FROM public.tb_chat_history ch
+            LEFT JOIN public.tb_dim_user u ON ch.user_key = u.user_key
+            WHERE ch.is_deleted = false
         """
-        
-        # Apply filter if a role is provided
+        params = []
+
+        # Optional role filter
         if role:
             if role not in ["user", "assistant"]:
                 raise HTTPException(status_code=400, detail="Invalid role filter. Use 'user' or 'assistant'.")
-            query += " AND message_role = %s"
-            cursor.execute(query, (user_key, role))
-        else:
-            cursor.execute(query, (user_key,))
+            query += " AND ch.message_role = %s"
+            params.append(role)
 
-        # Fetch the results, ordered by created_at DESC (latest first)
+        query += " ORDER BY ch.created_at DESC"
+        cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
 
-        # Format the chat history for the response
         chats = [
             {
                 "session_id": row["session_id"],
@@ -883,7 +880,7 @@ def get_chat_history_for_user(
                 "message_role": row["message_role"],
                 "message_text": row["message_text"],
                 "created_at": row["created_at"].isoformat(),
-                "user_name": user_name
+                "user_name": row["full_name"] or "Unknown"
             }
             for row in rows
         ]
@@ -891,11 +888,10 @@ def get_chat_history_for_user(
         return {"status": True, "chats": chats}
 
     except Exception as e:
-        # Rollback on any exception to ensure no partial commits
         db.connection.rollback()
         logging.error(f"❌ Error fetching chat history: {e}")
-        traceback.format_exc()
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
     question = state["input"]
