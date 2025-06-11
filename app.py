@@ -904,6 +904,53 @@ def get_chat_history_for_user(
         logging.error(f"❌ Error fetching chat history: {e}")
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
 
+
+class ChatHistoryRequest(BaseModel):
+    user_key: str
+    session_id: str
+
+@app.post("/get-chat-history-detail")
+def get_chat_history_detail_for_user(request: ChatHistoryRequest):
+    try:
+        cursor = db.get_cursor()
+        query = """
+            SELECT 
+                ch.session_id, 
+                ch.message_order, 
+                ch.message_role, 
+                ch.message_text, 
+                ch.created_at      
+            FROM public.tb_chat_history ch
+            WHERE ch.is_deleted = false
+              AND ch.user_key = %s
+              AND ch.session_id = %s
+            ORDER BY ch.message_order ASC
+        """
+        cursor.execute(query, (request.user_key, request.session_id))
+        # rows are returned as RealDictRow objects
+        rows = cursor.fetchall()
+        print("Raw DB Rows:", rows)  # Debug output
+
+        chat_history = []
+        # Iterate in pairs and use dictionary keys to access data.
+        for i in range(0, len(rows) - 1, 2):
+            # Check if the first in the pair is user and the second is assistant.
+            if rows[i]['message_role'] == "user" and rows[i+1]['message_role'] == "assistant":
+                chat_history.append({
+                    "query": rows[i]['message_text'],
+                    "answer": rows[i+1]['message_text']
+                })
+            else:
+                print(f"Message role mismatch at orders {rows[i]['message_order']} and {rows[i+1]['message_order']}")
+                
+        return JSONResponse(content={"status": True, "data": chat_history})
+
+    except Exception as e:
+        db.connection.rollback()
+        logging.error(f"❌ Error fetching chat history: {e}")
+        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
+
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
     question = state["input"]
