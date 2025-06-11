@@ -929,8 +929,6 @@ def get_chat_history_detail_for_user(request: ChatHistoryRequest):
         cursor.execute(query, (request.user_key, request.session_id))
         # rows are returned as RealDictRow objects
         rows = cursor.fetchall()
-        print("Raw DB Rows:", rows)  # Debug output
-
         chat_history = []
         # Iterate in pairs and use dictionary keys to access data.
         for i in range(0, len(rows) - 1, 2):
@@ -948,8 +946,7 @@ def get_chat_history_detail_for_user(request: ChatHistoryRequest):
     except Exception as e:
         db.connection.rollback()
         logging.error(f"❌ Error fetching chat history: {e}")
-        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
-
+        return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
 
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
