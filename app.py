@@ -341,7 +341,7 @@ def detect_people_and_images(input: str) -> list:
                 WHERE similarity(LOWER(tags)::text, %s::text) > 0.3
                 ORDER BY similarity(LOWER(tags)::text, %s::text) DESC
             """, (norm_name, norm_name))
-            row = cursor.fetchone()
+            row = cursor.fetchall()
             cursor.close()
             conn.close()
             if row and row[1]:
