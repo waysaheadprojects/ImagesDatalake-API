@@ -338,9 +338,8 @@ def detect_people_and_images(input: str) -> list:
             cursor.execute("""
                 SELECT title, encode(image_data, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
-                WHERE similarity(LOWER(title)::text, %s::text) > 0.3
-                ORDER BY similarity(LOWER(title)::text, %s::text) DESC
-                LIMIT 1
+                WHERE similarity(LOWER(tags)::text, %s::text) > 0.3
+                ORDER BY similarity(LOWER(tags)::text, %s::text) DESC
             """, (norm_name, norm_name))
             row = cursor.fetchone()
             cursor.close()
