@@ -257,11 +257,18 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 @tool
 def detect_people_and_images(input: str) -> list:
     """
-    🖼️ Image Finder Tool with Google Custom Search (CSE)
+    🖼️ Image Finder Tool: combines local PostgreSQL + Google CSE fallback.
 
-    Extracts PERSON and ORG names from HTML or text input using spaCy transformers,
-    then returns relevant images from PostgreSQL and Google Image Search fallback.
+    - Extracts PERSON and ORG entities.
+    - Pulls ALL matching local images by fuzzy match on tags.
+    - Falls back to Google Images for each name.
     """
+    import os
+    import psycopg2
+    import logging
+    from bs4 import BeautifulSoup
+    import re
+
     DB_CONFIG = {
         "host": os.getenv("POSTGRES_HOST"),
         "port": int(os.getenv("POSTGRES_PORT", "5432")),
@@ -331,7 +338,7 @@ def detect_people_and_images(input: str) -> list:
         matched_title = "N/A"
         local_photos = []
 
-        # 🔍 PostgreSQL Fuzzy Match
+        # 🔍 PostgreSQL Fuzzy Match — collect ALL matches
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
@@ -341,12 +348,17 @@ def detect_people_and_images(input: str) -> list:
                 WHERE similarity(LOWER(tags)::text, %s::text) > 0.3
                 ORDER BY similarity(LOWER(tags)::text, %s::text) DESC
             """, (norm_name, norm_name))
-            row = cursor.fetchall()
+            
+            rows = cursor.fetchall()
+            if rows:
+                for title, base64_img in rows:
+                    if base64_img:
+                        local_photos.append(f"data:image/jpeg;base64,{base64_img}")
+                matched_title = rows[0][0]
+
             cursor.close()
             conn.close()
-            if row and row[1]:
-                matched_title, base64_img = row
-                local_photos = [f"data:image/jpeg;base64,{base64_img}"]
+
         except Exception as e:
             logging.warning(f"⚠️ DB lookup failed for '{name}': {e}")
 
@@ -362,6 +374,7 @@ def detect_people_and_images(input: str) -> list:
         })
 
     return results
+
 
 @tool
 def get_attendee_images(event_name: str) -> List[dict]:
