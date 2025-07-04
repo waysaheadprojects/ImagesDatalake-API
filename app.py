@@ -347,6 +347,7 @@ def detect_people_and_images(input: str) -> list:
                 FROM tb_fact_image_uploads
                 WHERE similarity(LOWER(tags)::text, %s::text) > 0.3
                 ORDER BY similarity(LOWER(tags)::text, %s::text) DESC
+                LIMIT 10
             """, (norm_name, norm_name))
             
             rows = cursor.fetchall()
