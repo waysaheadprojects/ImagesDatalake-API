@@ -258,7 +258,8 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 def detect_people_and_images(input: str) -> list:
     """
     🖼️ Image Finder Tool: PostgreSQL + Google fallback.
-    Uses pg_trgm similarity + ILIKE fallback. Compresses to target KB.
+    Prioritizes full name match, then falls back to name parts.
+    Compresses to target KB.
     """
     import os
     import psycopg2
@@ -373,6 +374,8 @@ def detect_people_and_images(input: str) -> list:
     seen = set()
     results = []
 
+    logging.info(f"Entities detected: {entities}")
+
     for name, label in entities:
         norm_name = name.lower()
         if norm_name in seen:
@@ -381,6 +384,7 @@ def detect_people_and_images(input: str) -> list:
 
         matched_title = "N/A"
         local_photos = []
+        all_rows = []
 
         conn = None
         cursor = None
@@ -388,6 +392,8 @@ def detect_people_and_images(input: str) -> list:
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
+
+            # 🔍 Try full name match first
             cursor.execute("""
                 SELECT title, encode(image_data, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
@@ -396,14 +402,31 @@ def detect_people_and_images(input: str) -> list:
                 ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
                 LIMIT 10
             """, (norm_name, f"%{norm_name}%", norm_name))
-
             rows = cursor.fetchall()
-            if rows:
-                for title, base64_img in rows:
+            all_rows.extend(rows)
+
+            # Fallback: if no rows, try parts
+            if not rows:
+                name_parts = norm_name.split()
+                for part in name_parts:
+                    cursor.execute("""
+                        SELECT title, encode(image_data, 'base64') AS base64_image
+                        FROM tb_fact_image_uploads
+                        WHERE similarity(LOWER(tags), %s) > 0.1
+                           OR LOWER(tags) ILIKE %s
+                        ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
+                        LIMIT 5
+                    """, (part, f"%{part}%", part))
+                    part_rows = cursor.fetchall()
+                    all_rows.extend(part_rows)
+
+            if all_rows:
+                logging.info(f"Found {len(all_rows)} rows for {name}")
+                for title, base64_img in all_rows:
                     if base64_img:
                         compressed = compress_image_to_target_size(base64_img, target_kb=100)
                         local_photos.append(compressed)
-                matched_title = rows[0][0]
+                matched_title = all_rows[0][0]
 
         except Exception as e:
             logging.warning(f"⚠️ DB lookup failed for '{name}': {e}")
@@ -425,6 +448,7 @@ def detect_people_and_images(input: str) -> list:
         })
 
     return results
+
 
 
 @tool
