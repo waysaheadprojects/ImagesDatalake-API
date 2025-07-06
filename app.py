@@ -382,6 +382,9 @@ def detect_people_and_images(input: str) -> list:
         matched_title = "N/A"
         local_photos = []
 
+        conn = None
+        cursor = None
+
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
@@ -402,11 +405,14 @@ def detect_people_and_images(input: str) -> list:
                         local_photos.append(compressed)
                 matched_title = rows[0][0]
 
-            cursor.close()
-            conn.close()
-
         except Exception as e:
             logging.warning(f"⚠️ DB lookup failed for '{name}': {e}")
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
 
         web_photos = fetch_google_images(name, limit=2)
 
