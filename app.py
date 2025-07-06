@@ -259,7 +259,9 @@ def detect_people_and_images(input: str) -> list:
     """
     🖼️ Image Finder Tool: PostgreSQL + Google fallback.
     Prioritizes full name match, fallback to parts if needed.
-    Detailed debug logging.
+    Uses GPU spaCy transformer pipeline if available.
+    Fallback PERSON if NER empty.
+    Full debug logging.
     """
     import os
     import psycopg2
@@ -286,7 +288,20 @@ def detect_people_and_images(input: str) -> list:
 
     def extract_entities(text: str):
         import spacy
-        nlp = spacy.load("en_core_web_sm")
+
+        try:
+            spacy.require_gpu()
+            print("🔋 spaCy is using GPU ✅")
+        except Exception:
+            print("⚠️ spaCy GPU not available, will run on CPU.")
+
+        try:
+            nlp = spacy.load("en_core_web_trf")
+            print("✅ Using transformer pipeline (en_core_web_trf)")
+        except OSError:
+            print("⚠️ en_core_web_trf not installed, falling back to en_core_web_sm.")
+            nlp = spacy.load("en_core_web_sm")
+
         doc = nlp(text)
         entities = []
         for ent in doc.ents:
@@ -377,6 +392,10 @@ def detect_people_and_images(input: str) -> list:
 
     entities = extract_entities(clean_text)
     print("🔍 ENTITIES:", entities)
+
+    if not entities:
+        entities = [(clean_text.strip(), "PERSON")]
+        print("⚡ Using fallback ENTITY:", entities)
 
     seen = set()
     results = []
