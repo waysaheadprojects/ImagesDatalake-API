@@ -257,11 +257,8 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 @tool
 def detect_people_and_images(input: str) -> list:
     """
-    🖼️ Image Finder Tool: combines local PostgreSQL + Google CSE fallback.
-    - Extracts PERSON and ORG entities.
-    - Pulls ALL matching local images by fuzzy match on tags.
-    - Compresses local images under target KB.
-    - Falls back to Google Images for each name.
+    🖼️ Image Finder Tool: PostgreSQL + Google fallback.
+    Uses pg_trgm similarity + ILIKE fallback. Compresses to target KB.
     """
     import os
     import psycopg2
@@ -272,7 +269,6 @@ def detect_people_and_images(input: str) -> list:
     import base64
     from PIL import Image
 
-    # ✅ Database config
     DB_CONFIG = {
         "host": os.getenv("POSTGRES_HOST"),
         "port": int(os.getenv("POSTGRES_PORT", "5432")),
@@ -331,10 +327,6 @@ def detect_people_and_images(input: str) -> list:
         return images or ["https://upload.wikimedia.org/wikipedia/commons/8/89/Portrait_Placeholder.png"]
 
     def compress_image_to_target_size(base64_str: str, target_kb: int = 100) -> str:
-        """
-        Compress base64 image to approximately target_kb size.
-        Uses binary search on JPEG quality + resizing.
-        """
         try:
             img_bytes = base64.b64decode(base64_str)
             img = Image.open(BytesIO(img_bytes)).convert("RGB")
@@ -396,9 +388,12 @@ def detect_people_and_images(input: str) -> list:
             cursor.execute("""
                 SELECT title, encode(image_data, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
-                WHERE LOWER(tags) ILIKE %s
+                WHERE similarity(LOWER(tags), %s) > 0.1
+                   OR LOWER(tags) ILIKE %s
+                ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
                 LIMIT 10
-            """, (f"%{norm_name}%",))
+            """, (norm_name, f"%{norm_name}%", norm_name))
+
             rows = cursor.fetchall()
             if rows:
                 for title, base64_img in rows:
