@@ -258,8 +258,8 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 def detect_people_and_images(input: str) -> list:
     """
     🖼️ Image Finder Tool: PostgreSQL + Google fallback.
-    Prioritizes full name match, then falls back to name parts.
-    Compresses to target KB.
+    Prioritizes full name match, fallback to parts if needed.
+    Detailed debug logging.
     """
     import os
     import psycopg2
@@ -329,6 +329,9 @@ def detect_people_and_images(input: str) -> list:
 
     def compress_image_to_target_size(base64_str: str, target_kb: int = 100) -> str:
         try:
+            if base64_str.startswith("data:image"):
+                base64_str = base64_str.split(",")[1]
+
             img_bytes = base64.b64decode(base64_str)
             img = Image.open(BytesIO(img_bytes)).convert("RGB")
             max_size = img.size
@@ -370,11 +373,13 @@ def detect_people_and_images(input: str) -> list:
             return "data:image/jpeg;base64," + base64_str
 
     clean_text = extract_plain_text(input)
+    print("🔍 INPUT CLEAN TEXT:", clean_text)
+
     entities = extract_entities(clean_text)
+    print("🔍 ENTITIES:", entities)
+
     seen = set()
     results = []
-
-    logging.info(f"Entities detected: {entities}")
 
     for name, label in entities:
         norm_name = name.lower()
@@ -393,7 +398,7 @@ def detect_people_and_images(input: str) -> list:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
 
-            # 🔍 Try full name match first
+            print(f"🔎 TRY FULL NAME: {norm_name}")
             cursor.execute("""
                 SELECT title, encode(image_data, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
@@ -405,10 +410,12 @@ def detect_people_and_images(input: str) -> list:
             rows = cursor.fetchall()
             all_rows.extend(rows)
 
-            # Fallback: if no rows, try parts
+            print(f"🔎 FULL NAME MATCHED ROWS: {len(rows)}")
+
             if not rows:
                 name_parts = norm_name.split()
                 for part in name_parts:
+                    print(f"🔎 TRY PART: {part}")
                     cursor.execute("""
                         SELECT title, encode(image_data, 'base64') AS base64_image
                         FROM tb_fact_image_uploads
@@ -418,11 +425,14 @@ def detect_people_and_images(input: str) -> list:
                         LIMIT 5
                     """, (part, f"%{part}%", part))
                     part_rows = cursor.fetchall()
+                    print(f"🔎 PART MATCHED ROWS: {len(part_rows)}")
                     all_rows.extend(part_rows)
 
+            print(f"✅ TOTAL ROWS FOUND: {len(all_rows)}")
+
             if all_rows:
-                logging.info(f"Found {len(all_rows)} rows for {name}")
                 for title, base64_img in all_rows:
+                    print(f"👉 TITLE: {title} | IMAGE EXISTS: {bool(base64_img)}")
                     if base64_img:
                         compressed = compress_image_to_target_size(base64_img, target_kb=100)
                         local_photos.append(compressed)
@@ -437,7 +447,10 @@ def detect_people_and_images(input: str) -> list:
             if conn:
                 conn.close()
 
+        print(f"✅ LOCAL PHOTOS COUNT: {len(local_photos)}")
+
         web_photos = fetch_google_images(name, limit=2)
+        print(f"🌐 GOOGLE PHOTOS: {web_photos}")
 
         results.append({
             "name": name,
@@ -446,6 +459,8 @@ def detect_people_and_images(input: str) -> list:
             "local_photos": local_photos,
             "web_photos": web_photos
         })
+
+    print(f"🎉 FINAL RESULTS: {results}")
 
     return results
 
