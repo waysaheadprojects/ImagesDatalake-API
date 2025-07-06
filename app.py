@@ -258,9 +258,9 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 def detect_people_and_images(input: str) -> list:
     """
     🖼️ Image Finder Tool: combines local PostgreSQL + Google CSE fallback.
-
     - Extracts PERSON and ORG entities.
     - Pulls ALL matching local images by fuzzy match on tags.
+    - Compresses local images under target KB.
     - Falls back to Google Images for each name.
     """
     import os
@@ -268,7 +268,11 @@ def detect_people_and_images(input: str) -> list:
     import logging
     from bs4 import BeautifulSoup
     import re
+    from io import BytesIO
+    import base64
+    from PIL import Image
 
+    # ✅ Database config
     DB_CONFIG = {
         "host": os.getenv("POSTGRES_HOST"),
         "port": int(os.getenv("POSTGRES_PORT", "5432")),
@@ -284,6 +288,8 @@ def detect_people_and_images(input: str) -> list:
             return re.sub(r"<[^>]+>", "", text)
 
     def extract_entities(text: str):
+        import spacy
+        nlp = spacy.load("en_core_web_sm")
         doc = nlp(text)
         entities = []
         for ent in doc.ents:
@@ -324,6 +330,52 @@ def detect_people_and_images(input: str) -> list:
             logging.warning(f"⚠️ Google CSE failed for '{query}': {e}")
         return images or ["https://upload.wikimedia.org/wikipedia/commons/8/89/Portrait_Placeholder.png"]
 
+    def compress_image_to_target_size(base64_str: str, target_kb: int = 100) -> str:
+        """
+        Compress base64 image to approximately target_kb size.
+        Uses binary search on JPEG quality + resizing.
+        """
+        try:
+            img_bytes = base64.b64decode(base64_str)
+            img = Image.open(BytesIO(img_bytes)).convert("RGB")
+            max_size = img.size
+
+            min_quality = 30
+            max_quality = 95
+
+            for scale in [1.0, 0.85, 0.7, 0.5]:
+                resized = img.resize(
+                    (int(max_size[0] * scale), int(max_size[1] * scale)),
+                    Image.LANCZOS
+                )
+
+                low = min_quality
+                high = max_quality
+                best_buffer = None
+
+                while low <= high:
+                    mid_quality = (low + high) // 2
+                    buffer = BytesIO()
+                    resized.save(buffer, format="JPEG", quality=mid_quality)
+                    size_kb = len(buffer.getvalue()) / 1024
+
+                    if size_kb <= target_kb:
+                        best_buffer = buffer
+                        low = mid_quality + 1
+                    else:
+                        high = mid_quality - 1
+
+                if best_buffer:
+                    return "data:image/jpeg;base64," + base64.b64encode(best_buffer.getvalue()).decode()
+
+            fallback_buffer = BytesIO()
+            img.save(fallback_buffer, format="JPEG", quality=min_quality)
+            return "data:image/jpeg;base64," + base64.b64encode(fallback_buffer.getvalue()).decode()
+
+        except Exception as e:
+            logging.warning(f"⚠️ Image compression failed: {e}")
+            return "data:image/jpeg;base64," + base64_str
+
     clean_text = extract_plain_text(input)
     entities = extract_entities(clean_text)
     seen = set()
@@ -338,7 +390,6 @@ def detect_people_and_images(input: str) -> list:
         matched_title = "N/A"
         local_photos = []
 
-        # 🔍 PostgreSQL Fuzzy Match — collect ALL matches
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
@@ -349,12 +400,13 @@ def detect_people_and_images(input: str) -> list:
                 ORDER BY similarity(LOWER(tags)::text, %s::text) DESC
                 LIMIT 10
             """, (norm_name, norm_name))
-            
+
             rows = cursor.fetchall()
             if rows:
                 for title, base64_img in rows:
                     if base64_img:
-                        local_photos.append(f"data:image/jpeg;base64,{base64_img}")
+                        compressed = compress_image_to_target_size(base64_img, target_kb=100)
+                        local_photos.append(compressed)
                 matched_title = rows[0][0]
 
             cursor.close()
@@ -363,7 +415,6 @@ def detect_people_and_images(input: str) -> list:
         except Exception as e:
             logging.warning(f"⚠️ DB lookup failed for '{name}': {e}")
 
-        # 🌐 Google Image Search Fallback
         web_photos = fetch_google_images(name, limit=2)
 
         results.append({
