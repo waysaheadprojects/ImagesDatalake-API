@@ -350,7 +350,7 @@ def detect_people_and_images(input: str) -> list:
                 WHERE similarity(LOWER(tags), %s) > 0.3
                    OR LOWER(tags) ILIKE %s
                 ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
-                LIMIT 50
+                LIMIT 100
             """, (norm_name, f"%{norm_name}%", norm_name))
             rows = cursor.fetchall()
 
@@ -364,7 +364,7 @@ def detect_people_and_images(input: str) -> list:
                     WHERE similarity(LOWER(tags), %s) > 0.3
                        OR LOWER(tags) ILIKE %s
                     ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
-                    LIMIT 50
+                    LIMIT 100
                 """, (first_name, f"%{first_name}%", first_name))
                 rows = cursor.fetchall()
 
