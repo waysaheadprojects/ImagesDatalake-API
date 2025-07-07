@@ -635,11 +635,15 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
 @app.post("/get_images")
 async def get_images(payload: ImageRequest, current_user: dict = Depends(get_current_user)):
     try:
-        images = detect_people_and_images.invoke(payload.answer)
+        images = detect_people_and_images.invoke({
+            "question": payload.question,
+            "answer": payload.answer
+        })
         return {"status": True, "images": images}
     except Exception as e:
         logging.error(f"/get_images failed: {e}")
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
 
 
 @app.post("/get_videos")
