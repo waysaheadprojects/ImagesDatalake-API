@@ -486,6 +486,7 @@ def chatbot(state: State):
             "content": (
                 "You are a helpful, friendly assistant who speaks naturally and keeps a warm tone.\n"
                 "You can use tools when needed, and always return your answers in **clean, well-structured HTML**.\n"
+                "Converse with the user, until you get clarity on what the user wants and answer properly please"
                 "\n"
                 "✅ **Key Rules:**\n"
                 "<ul>\n"
