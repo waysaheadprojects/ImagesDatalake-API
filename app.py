@@ -145,67 +145,106 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 # ----------------- Tool Definitions -----------------
 @tool
-def query_zoho_leads(input_text: str) -> List[dict]:
+def query_zoho_leads(input_text: str) -> list:
     """
-    🔍 Search for participant information in the Zoho CRM leads database. Use this tool if asked about events such as PRC 2024, India Fashion Forum etc.
-
-    This tool queries `tb_zoho_crm_lead` using fuzzy keyword matching across:
-    - full_name, email, organisation, event_name
-    - main_category, sub_category1, sub_category2
-    - region, country
-
-    ✅ Returns all matching records (max 10) formatted like:
-    "Gopal Asthana (CEO) from Tata CLiQ attended India Fashion Forum 2024. Email: asthanagopal@tatacliq.com."
-
-    If no email is found, it will say "Email not available."
+    🎯 Flexible CRM lookup:
+    - Dynamically builds WHERE based on detected tokens.
+    - Safe parameterized SQL.
+    - Exact full_name match if strong name pattern.
+    - Fuzzy multi-field fallback.
     """
+
+    import psycopg2
+    import os
+    import logging
+
+    input_clean = input_text.strip()
+    keywords = input_clean.split()
+    phrase = f"%{input_clean.lower()}%"
+
+    results = []
 
     try:
-        keywords = input_text.lower().split()
-        fields = [
-            "full_name", "email", "organisation", "event_name",
-            "main_category", "sub_category1", "sub_category2",
-            "region", "country"
-        ]
-        clause = " OR ".join([f"LOWER({f}) LIKE '%{k}%'" for f in fields for k in keywords])
-
-        sql = f"""
-            SELECT 
-                full_name, email, organisation, designation, event_name
-            FROM tb_zoho_crm_lead
-            WHERE {clause}
-            LIMIT 100;
-        """
         conn = psycopg2.connect(
             host=os.getenv("POSTGRES_HOST"),
-            port= int(os.getenv("POSTGRES_PORT", "5432")),
+            port=int(os.getenv("POSTGRES_PORT", "5432")),
             dbname=os.getenv("POSTGRES_STG_DB"),
             user=os.getenv("POSTGRES_STG_USER"),
             password=os.getenv("POSTGRES_STG_PASSWORD")
         )
+        cur = conn.cursor()
 
-        cursor = conn.cursor()
-        cursor.execute(sql)
-        rows = cursor.fetchall()
-        cursor.close()
+        # 👀 1️⃣ Heuristic: If input is likely a name, make full_name exact
+        where_clauses = []
+        params = []
+
+        if len(keywords) >= 2 and all(w[0].isupper() for w in keywords):
+            where_clauses.append("LOWER(full_name) = %s")
+            params.append(input_clean.lower())
+        else:
+            # 2️⃣ Otherwise build fuzzy across smart fields
+            fuzzy_fields = [
+                "LOWER(full_name)", "LOWER(email)", "LOWER(secondary_email)",
+                "LOWER(organisation)", "LOWER(event_name)", "LOWER(participant_profile)",
+                "LOWER(vertical)", "LOWER(main_category)", "LOWER(sub_category1)",
+                "LOWER(sub_category2)", "LOWER(region)", "LOWER(country)"
+            ]
+
+            for word in keywords:
+                word_pattern = f"%{word.lower()}%"
+                for field in fuzzy_fields:
+                    where_clauses.append(f"{field} LIKE %s")
+                    params.append(word_pattern)
+
+        where_sql = " OR ".join(where_clauses) if where_clauses else "1=1"
+
+        sql = f"""
+            SELECT id, event_name, participant_profile, full_name, designation,
+                   organisation, email, secondary_email, vertical, main_category,
+                   sub_category1, sub_category2, region, country, dbtimestamp
+            FROM public.tb_zoho_crm_lead
+            WHERE {where_sql}
+            LIMIT 50;
+        """
+
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        cur.close()
         conn.close()
 
         if rows:
-            results = []
             for row in rows:
-                full_name, email, org, designation, event = row
-                email_part = f"Email: {email}" if email else "Email not available."
-                response = (
-                    f"{full_name} ({designation}) from {org} attended {event}. {email_part}"
-                )
-                results.append({"response": response})
-            return results
+                (
+                    id, event_name, participant_profile, full_name, designation,
+                    organisation, email, secondary_email, vertical, main_category,
+                    sub_category1, sub_category2, region, country, dbtimestamp
+                ) = row
+
+                results.append({
+                    "id": id,
+                    "event_name": event_name,
+                    "participant_profile": participant_profile,
+                    "full_name": full_name,
+                    "designation": designation,
+                    "organisation": organisation,
+                    "email": email or "Not available",
+                    "secondary_email": secondary_email or "Not available",
+                    "vertical": vertical,
+                    "main_category": main_category,
+                    "sub_category1": sub_category1,
+                    "sub_category2": sub_category2,
+                    "region": region,
+                    "country": country,
+                    "created_at": str(dbtimestamp)
+                })
         else:
-            return [{"response": "No matching participants found in Zoho CRM."}]
+            results.append({"message": "No matching participants found for your input."})
+
+        return results
 
     except Exception as e:
-        logging.error(f"❌ Zoho leads query failed: {e}")
-        return [{"response": "Query failed due to an internal error."}]
+        logging.error(f"❌ Zoho CRM dynamic query failed: {e}")
+        return [{"message": "Internal error while querying CRM."}]
 
     
 @tool
