@@ -258,9 +258,9 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 def detect_people_and_images(input: str) -> list:
     """
     🖼️ Image Finder Tool: PostgreSQL only.
-    Prioritizes full name match, fallback to parts if needed.
-    Uses GPU spaCy transformer pipeline if available.
+    Uses GPU spaCy transformer if available.
     Fallback PERSON if NER empty.
+    Returns pre-compressed low-res images.
     Full debug logging.
     """
 
@@ -269,10 +269,7 @@ def detect_people_and_images(input: str) -> list:
     import logging
     from bs4 import BeautifulSoup
     import re
-    from io import BytesIO
     import base64
-    from PIL import Image
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     DB_CONFIG = {
         "host": os.getenv("POSTGRES_HOST"),
@@ -284,6 +281,7 @@ def detect_people_and_images(input: str) -> list:
 
     def extract_plain_text(text: str) -> str:
         try:
+            from bs4 import BeautifulSoup
             return BeautifulSoup(text, "html.parser").get_text(separator=" ").strip()
         except Exception:
             return re.sub(r"<[^>]+>", "", text)
@@ -320,62 +318,6 @@ def detect_people_and_images(input: str) -> list:
             entities.append((ent.text.strip(), ent.label_))
         return entities[:5]
 
-    def compress_image_to_target_size(base64_str: str, target_kb: int = 100) -> str:
-        try:
-            if base64_str.startswith("data:image"):
-                base64_str = base64_str.split(",")[1]
-
-            img_bytes = base64.b64decode(base64_str)
-            img = Image.open(BytesIO(img_bytes)).convert("RGB")
-            max_size = img.size
-
-            min_quality = 30
-            max_quality = 95
-
-            for scale in [1.0, 0.85, 0.7, 0.5]:
-                resized = img.resize(
-                    (int(max_size[0] * scale), int(max_size[1] * scale)),
-                    Image.LANCZOS
-                )
-
-                low = min_quality
-                high = max_quality
-                best_buffer = None
-
-                while low <= high:
-                    mid_quality = (low + high) // 2
-                    buffer = BytesIO()
-                    resized.save(buffer, format="JPEG", quality=mid_quality)
-                    size_kb = len(buffer.getvalue()) / 1024
-
-                    if size_kb <= target_kb:
-                        best_buffer = buffer
-                        low = mid_quality + 1
-                    else:
-                        high = mid_quality - 1
-
-                if best_buffer:
-                    return "data:image/jpeg;base64," + base64.b64encode(best_buffer.getvalue()).decode()
-
-            fallback_buffer = BytesIO()
-            img.save(fallback_buffer, format="JPEG", quality=min_quality)
-            return "data:image/jpeg;base64," + base64.b64encode(fallback_buffer.getvalue()).decode()
-
-        except Exception as e:
-            logging.warning(f"⚠️ Image compression failed: {e}")
-            return "data:image/jpeg;base64," + base64_str
-
-    def compress_batch(rows, target_kb=100):
-        compressed_list = []
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [
-                executor.submit(compress_image_to_target_size, base64_img, target_kb)
-                for _, base64_img in rows if base64_img
-            ]
-            for f in as_completed(futures):
-                compressed_list.append(f.result())
-        return compressed_list
-
     clean_text = extract_plain_text(input)
     print("🔍 INPUT CLEAN TEXT:", clean_text)
 
@@ -408,7 +350,7 @@ def detect_people_and_images(input: str) -> list:
 
             print(f"🔎 TRY FULL NAME: {norm_name}")
             cursor.execute("""
-                SELECT title, encode(image_data, 'base64') AS base64_image
+                SELECT title, encode(image_data_low, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
                 WHERE similarity(LOWER(tags), %s) > 0.1
                    OR LOWER(tags) ILIKE %s
@@ -425,7 +367,7 @@ def detect_people_and_images(input: str) -> list:
                 for part in name_parts:
                     print(f"🔎 TRY PART: {part}")
                     cursor.execute("""
-                        SELECT title, encode(image_data, 'base64') AS base64_image
+                        SELECT title, encode(image_data_low, 'base64') AS base64_image
                         FROM tb_fact_image_uploads
                         WHERE similarity(LOWER(tags), %s) > 0.1
                            OR LOWER(tags) ILIKE %s
@@ -439,7 +381,11 @@ def detect_people_and_images(input: str) -> list:
             print(f"✅ TOTAL ROWS FOUND: {len(all_rows)}")
 
             if all_rows:
-                local_photos = compress_batch(all_rows, target_kb=100)
+                # No compression needed — images are already low
+                local_photos = [
+                    f"data:image/jpeg;base64,{base64_img}"
+                    for _, base64_img in all_rows if base64_img
+                ]
                 matched_title = all_rows[0][0]
 
         except Exception as e:
