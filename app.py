@@ -341,7 +341,7 @@ def detect_people_and_images(input: str) -> list:
 
             print(f"🔎 Searching FULL NAME: '{norm_name}'")
             cursor.execute("""
-                SELECT title, encode(image_data, 'base64') AS base64_image
+                SELECT title, encode(image_data_low, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
                 WHERE similarity(LOWER(tags), %s) > 0.3
                    OR LOWER(tags) ILIKE %s
@@ -355,7 +355,7 @@ def detect_people_and_images(input: str) -> list:
                 first_name = norm_name.split()[0]
                 print(f"🔄 Fallback to FIRST NAME: '{first_name}'")
                 cursor.execute("""
-                    SELECT title, encode(image_data, 'base64') AS base64_image
+                    SELECT title, encode(image_data_low, 'base64') AS base64_image
                     FROM tb_fact_image_uploads
                     WHERE similarity(LOWER(tags), %s) > 0.3
                        OR LOWER(tags) ILIKE %s
