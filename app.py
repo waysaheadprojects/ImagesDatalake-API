@@ -258,10 +258,10 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 def detect_people_and_images(input: str) -> list:
     """
     🖼️ Image Finder Tool: PostgreSQL only.
-    Uses GPU spaCy transformer if available.
-    Fallback PERSON if NER empty.
-    Returns pre-compressed low-res images.
-    Full debug logging.
+    Uses spaCy NER with GPU if available.
+    Fallback PERSON if NER is empty.
+    Searches full name first, then first name.
+    Returns low-res base64 images.
     """
 
     import os
@@ -281,7 +281,6 @@ def detect_people_and_images(input: str) -> list:
 
     def extract_plain_text(text: str) -> str:
         try:
-            from bs4 import BeautifulSoup
             return BeautifulSoup(text, "html.parser").get_text(separator=" ").strip()
         except Exception:
             return re.sub(r"<[^>]+>", "", text)
@@ -291,15 +290,14 @@ def detect_people_and_images(input: str) -> list:
 
         try:
             spacy.require_gpu()
-            print("🔋 spaCy is using GPU ✅")
+            print("🔋 spaCy GPU enabled")
         except Exception:
-            print("⚠️ spaCy GPU not available, will run on CPU.")
+            print("⚠️ spaCy GPU not available")
 
         try:
             nlp = spacy.load("en_core_web_trf")
-            print("✅ Using transformer pipeline (en_core_web_trf)")
         except OSError:
-            print("⚠️ en_core_web_trf not installed, falling back to en_core_web_sm.")
+            print("⚠️ en_core_web_trf not installed, falling back to en_core_web_sm")
             nlp = spacy.load("en_core_web_sm")
 
         doc = nlp(text)
@@ -319,14 +317,14 @@ def detect_people_and_images(input: str) -> list:
         return entities[:5]
 
     clean_text = extract_plain_text(input)
-    print("🔍 INPUT CLEAN TEXT:", clean_text)
+    print("🔍 CLEAN TEXT:", clean_text)
 
     entities = extract_entities(clean_text)
     print("🔍 ENTITIES:", entities)
 
     if not entities:
         entities = [(clean_text.strip(), "PERSON")]
-        print("⚡ Using fallback ENTITY:", entities)
+        print("⚡ Fallback ENTITY:", entities)
 
     seen = set()
     results = []
@@ -339,34 +337,45 @@ def detect_people_and_images(input: str) -> list:
 
         matched_title = "N/A"
         local_photos = []
-        all_rows = []
-
-        conn = None
-        cursor = None
 
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
 
-            print(f"🔎 TRY FULL NAME: {norm_name}")
+            ## 1️⃣ Try FULL NAME
+            print(f"🔎 Searching FULL NAME: '{norm_name}'")
             cursor.execute("""
                 SELECT title, encode(image_data_low, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
                 WHERE similarity(LOWER(tags), %s) > 0.3
                    OR LOWER(tags) ILIKE %s
                 ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
-                LIMIT 100
+                LIMIT 50
             """, (norm_name, f"%{norm_name}%", norm_name))
             rows = cursor.fetchall()
-            all_rows.extend(rows)
 
-            if all_rows:
-                # No compression needed — images are already low
-                local_photos = [
-                    f"data:image/jpeg;base64,{base64_img}"
-                    for _, base64_img in all_rows if base64_img
-                ]
-                matched_title = all_rows[0][0]
+            # 2️⃣ If empty, fallback to FIRST NAME
+            if not rows and " " in norm_name:
+                first_name = norm_name.split()[0]
+                print(f"🔄 Fallback to FIRST NAME: '{first_name}'")
+                cursor.execute("""
+                    SELECT title, encode(image_data_low, 'base64') AS base64_image
+                    FROM tb_fact_image_uploads
+                    WHERE similarity(LOWER(tags), %s) > 0.3
+                       OR LOWER(tags) ILIKE %s
+                    ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
+                    LIMIT 50
+                """, (first_name, f"%{first_name}%", first_name))
+                rows = cursor.fetchall()
+
+            # Assemble final list
+            local_photos = [
+                f"data:image/jpeg;base64,{base64_img}"
+                for _, base64_img in rows if base64_img
+            ]
+            matched_title = rows[0][0] if rows else "N/A"
+
+            print(f"✅ Found {len(local_photos)} images for: {name}")
 
         except Exception as e:
             logging.warning(f"⚠️ DB lookup failed for '{name}': {e}")
@@ -377,8 +386,6 @@ def detect_people_and_images(input: str) -> list:
             if conn:
                 conn.close()
 
-        print(f"✅ LOCAL PHOTOS COUNT: {len(local_photos)}")
-
         results.append({
             "name": name,
             "type": "person" if label == "PERSON" else "brand",
@@ -386,8 +393,7 @@ def detect_people_and_images(input: str) -> list:
             "local_photos": local_photos
         })
 
-    print(f"🎉 FINAL RESULTS: {results}")
-
+    print("🎉 FINAL RESULTS:", results)
     return results
 
 
