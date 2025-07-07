@@ -258,17 +258,18 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 def detect_people_and_images(input: str) -> list:
     """
     🖼️ Image Finder Tool: PostgreSQL only.
-    Uses spaCy NER with GPU if available.
-    Fallback PERSON if NER is empty.
-    Searches full name first, then first name.
-    Returns low-res base64 images.
-    """
 
+    - Uses spaCy NER to extract PERSON/ORG.
+    - Fuzzy match on tags in local DB.
+    - If no full name match, fallback to first name only.
+    - Returns local base64 images.
+    """
     import os
     import psycopg2
     import logging
     from bs4 import BeautifulSoup
     import re
+    import spacy
     import base64
 
     DB_CONFIG = {
@@ -286,20 +287,16 @@ def detect_people_and_images(input: str) -> list:
             return re.sub(r"<[^>]+>", "", text)
 
     def extract_entities(text: str):
-        import spacy
-
         try:
             spacy.require_gpu()
             print("🔋 spaCy GPU enabled")
         except Exception:
             print("⚠️ spaCy GPU not available")
-
         try:
             nlp = spacy.load("en_core_web_trf")
         except OSError:
-            print("⚠️ en_core_web_trf not installed, falling back to en_core_web_sm")
+            print("⚠️ en_core_web_trf not found, using en_core_web_sm")
             nlp = spacy.load("en_core_web_sm")
-
         doc = nlp(text)
         entities = []
         for ent in doc.ents:
@@ -342,49 +339,42 @@ def detect_people_and_images(input: str) -> list:
             conn = psycopg2.connect(**DB_CONFIG)
             cursor = conn.cursor()
 
-            ## 1️⃣ Try FULL NAME
             print(f"🔎 Searching FULL NAME: '{norm_name}'")
             cursor.execute("""
-                SELECT title, encode(image_data_low, 'base64') AS base64_image
+                SELECT title, encode(image_data, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
                 WHERE similarity(LOWER(tags), %s) > 0.3
                    OR LOWER(tags) ILIKE %s
-                ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
-                LIMIT 100
+                ORDER BY similarity(LOWER(tags), %s) DESC
+                LIMIT 10
             """, (norm_name, f"%{norm_name}%", norm_name))
             rows = cursor.fetchall()
 
-            # 2️⃣ If empty, fallback to FIRST NAME
+            # Fallback: first name only if no rows and has space
             if not rows and " " in norm_name:
                 first_name = norm_name.split()[0]
                 print(f"🔄 Fallback to FIRST NAME: '{first_name}'")
                 cursor.execute("""
-                    SELECT title, encode(image_data_low, 'base64') AS base64_image
+                    SELECT title, encode(image_data, 'base64') AS base64_image
                     FROM tb_fact_image_uploads
                     WHERE similarity(LOWER(tags), %s) > 0.3
                        OR LOWER(tags) ILIKE %s
-                    ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
-                    LIMIT 100
+                    ORDER BY similarity(LOWER(tags), %s) DESC
+                    LIMIT 10
                 """, (first_name, f"%{first_name}%", first_name))
                 rows = cursor.fetchall()
 
-            # Assemble final list
-            local_photos = [
-                f"data:image/jpeg;base64,{base64_img}"
-                for _, base64_img in rows if base64_img
-            ]
-            matched_title = rows[0][0] if rows else "N/A"
+            if rows:
+                for title, base64_img in rows:
+                    if base64_img:
+                        local_photos.append(f"data:image/jpeg;base64,{base64_img}")
+                matched_title = rows[0][0]
 
-            print(f"✅ Found {len(local_photos)} images for: {name}")
+            cursor.close()
+            conn.close()
 
         except Exception as e:
             logging.warning(f"⚠️ DB lookup failed for '{name}': {e}")
-
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
 
         results.append({
             "name": name,
