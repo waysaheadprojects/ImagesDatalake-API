@@ -257,12 +257,13 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 @tool
 def detect_people_and_images(input: str) -> list:
     """
-    🖼️ Image Finder Tool: PostgreSQL + Google fallback.
+    🖼️ Image Finder Tool: PostgreSQL only.
     Prioritizes full name match, fallback to parts if needed.
     Uses GPU spaCy transformer pipeline if available.
     Fallback PERSON if NER empty.
     Full debug logging.
     """
+
     import os
     import psycopg2
     import logging
@@ -271,6 +272,7 @@ def detect_people_and_images(input: str) -> list:
     from io import BytesIO
     import base64
     from PIL import Image
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     DB_CONFIG = {
         "host": os.getenv("POSTGRES_HOST"),
@@ -318,30 +320,6 @@ def detect_people_and_images(input: str) -> list:
             entities.append((ent.text.strip(), ent.label_))
         return entities[:5]
 
-    def fetch_google_images(query: str, limit: int = 2) -> list:
-        from googleapiclient.discovery import build
-        api_key = os.getenv("GOOGLE_CSE_API_KEY")
-        cx = os.getenv("GOOGLE_CSE_CX")
-        images = []
-        try:
-            service = build("customsearch", "v1", developerKey=api_key)
-            res = service.cse().list(
-                q=query,
-                cx=cx,
-                searchType="image",
-                num=limit,
-                safe="high",
-                fileType="jpg",
-                imgType="face"
-            ).execute()
-            for item in res.get("items", []):
-                link = item.get("link", "")
-                if link and link.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
-                    images.append(link)
-        except Exception as e:
-            logging.warning(f"⚠️ Google CSE failed for '{query}': {e}")
-        return images or ["https://upload.wikimedia.org/wikipedia/commons/8/89/Portrait_Placeholder.png"]
-
     def compress_image_to_target_size(base64_str: str, target_kb: int = 100) -> str:
         try:
             if base64_str.startswith("data:image"):
@@ -387,6 +365,17 @@ def detect_people_and_images(input: str) -> list:
             logging.warning(f"⚠️ Image compression failed: {e}")
             return "data:image/jpeg;base64," + base64_str
 
+    def compress_batch(rows, target_kb=100):
+        compressed_list = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [
+                executor.submit(compress_image_to_target_size, base64_img, target_kb)
+                for _, base64_img in rows if base64_img
+            ]
+            for f in as_completed(futures):
+                compressed_list.append(f.result())
+        return compressed_list
+
     clean_text = extract_plain_text(input)
     print("🔍 INPUT CLEAN TEXT:", clean_text)
 
@@ -424,7 +413,7 @@ def detect_people_and_images(input: str) -> list:
                 WHERE similarity(LOWER(tags), %s) > 0.1
                    OR LOWER(tags) ILIKE %s
                 ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
-                LIMIT 10
+                LIMIT 100
             """, (norm_name, f"%{norm_name}%", norm_name))
             rows = cursor.fetchall()
             all_rows.extend(rows)
@@ -441,7 +430,7 @@ def detect_people_and_images(input: str) -> list:
                         WHERE similarity(LOWER(tags), %s) > 0.1
                            OR LOWER(tags) ILIKE %s
                         ORDER BY GREATEST(similarity(LOWER(tags), %s), 0) DESC
-                        LIMIT 5
+                        LIMIT 50
                     """, (part, f"%{part}%", part))
                     part_rows = cursor.fetchall()
                     print(f"🔎 PART MATCHED ROWS: {len(part_rows)}")
@@ -450,11 +439,7 @@ def detect_people_and_images(input: str) -> list:
             print(f"✅ TOTAL ROWS FOUND: {len(all_rows)}")
 
             if all_rows:
-                for title, base64_img in all_rows:
-                    print(f"👉 TITLE: {title} | IMAGE EXISTS: {bool(base64_img)}")
-                    if base64_img:
-                        compressed = compress_image_to_target_size(base64_img, target_kb=100)
-                        local_photos.append(compressed)
+                local_photos = compress_batch(all_rows, target_kb=100)
                 matched_title = all_rows[0][0]
 
         except Exception as e:
@@ -468,15 +453,11 @@ def detect_people_and_images(input: str) -> list:
 
         print(f"✅ LOCAL PHOTOS COUNT: {len(local_photos)}")
 
-        web_photos = fetch_google_images(name, limit=2)
-        print(f"🌐 GOOGLE PHOTOS: {web_photos}")
-
         results.append({
             "name": name,
             "type": "person" if label == "PERSON" else "brand",
             "matched_title": matched_title,
-            "local_photos": local_photos,
-            "web_photos": web_photos
+            "local_photos": local_photos
         })
 
     print(f"🎉 FINAL RESULTS: {results}")
