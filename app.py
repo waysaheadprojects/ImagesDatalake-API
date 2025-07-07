@@ -145,15 +145,75 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 # ----------------- Tool Definitions -----------------
 @tool
-def query_zoho_leads(input_text: str) -> list:
+def query_participants_dynamic(input_text: str) -> list:
     """
-    🎯 Flexible CRM lookup:
-    - Dynamically builds WHERE based on detected tokens.
-    - Safe parameterized SQL.
-    - Exact full_name match if strong name pattern.
-    - Fuzzy multi-field fallback.
-    """
+    🔍 Intelligent Zoho CRM Participant Lookup Tool
 
+    This tool searches the `tb_zoho_crm_lead` table dynamically based on 
+    the natural language query provided by the user.
+
+    ----------------------------------------
+    📌 **How it works**
+    ----------------------------------------
+    - **Flexible Profile Detection:**  
+      If the input text contains participant role keywords like "speaker", 
+      "exhibitor", "panelist", "sponsor", "moderator", or any other 
+      valid participant profile, the tool will add an explicit filter:  
+      `participant_profile = '<detected profile>'`.
+
+    - **Event Matching:**  
+      If the input mentions an event name or any event-related keyword 
+      (e.g., "PRC 2024", "India Fashion Forum", "Retail Summit"), the tool 
+      safely filters results by matching `event_name` with a `LIKE` condition.
+
+    - **Combined Filters:**  
+      If both a participant role **and** an event are detected in the same query, 
+      both filters will be applied, ensuring precise results.
+
+    - **Fuzzy Fallback:**  
+      If the input does not match any known participant profiles or event patterns, 
+      the tool automatically falls back to a multi-field fuzzy keyword match 
+      across `full_name`, `organisation`, `email`, `vertical`, `main_category`, 
+      `region`, `country`, and other relevant text fields.
+
+    - **Safe Query:**  
+      The WHERE clause is built dynamically but always uses parameterized 
+      `LIKE` patterns to prevent SQL injection risks.
+
+    ----------------------------------------
+    ✅ **Returns**
+    ----------------------------------------
+    - A list of dictionaries, each containing structured participant data:  
+      • `full_name`  
+      • `designation`  
+      • `organisation`  
+      • `event_name`  
+      • `participant_profile`  
+      • `email`, `secondary_email`  
+      • `region`, `country`  
+      • `vertical`, `main_category`, `sub_category1`, `sub_category2`  
+      • `created_at` timestamp
+
+    - If no results match, a single item with `{"message": "No matching participants found."}` is returned.
+
+    ----------------------------------------
+    ✅ **Example Queries it can handle**
+    ----------------------------------------
+    - "Name some **speakers** at PRC 2024"
+    - "List **exhibitors** for India Food Forum"
+    - "Find **panelists** at the Retail Summit"
+    - "Show participants from **Tata CLiQ** at PRC"
+    - "Any **moderators** for IFF 2024?"
+
+    ----------------------------------------
+    ⚡ **Key Benefits**
+    ----------------------------------------
+    - One universal tool for all roles & events — no separate endpoints needed.
+    - Great for agentic LLM workflows — the LLM just feeds the user’s natural text.
+    - Ensures precise, relevant results — no random noise.
+    - Always safe and efficient for production.
+
+    """
     import psycopg2
     import os
     import logging
