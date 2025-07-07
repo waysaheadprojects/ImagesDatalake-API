@@ -145,7 +145,7 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 # ----------------- Tool Definitions -----------------
 @tool
-def query_participants_dynamic(input_text: str) -> list:
+def query_zoho_leads(input_text: str) -> list:
     """
     🔍 Intelligent Zoho CRM Participant Lookup Tool
 
