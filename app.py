@@ -145,47 +145,30 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 # ----------------- Tool Definitions -----------------
 @tool
-def query_zoho_leads(sql_query: str) -> list:
+def query_zoho_leads(sql_query: str) -> str:
     """
-    🔍 Runs a raw SELECT SQL on the Zoho CRM leads table.
-
-    👉 LLM must supply the entire SQL statement, e.g.:
-       SELECT full_name, designation, organisation
-       FROM tb_zoho_crm_lead
-       WHERE LOWER(full_name) LIKE '%rupam%';
-
-    ✅ Enforces:
-    - SELECT-only.
-    - Returns all rows as dicts.
+    Runs a raw SELECT on tb_zoho_crm_lead.
+    The LLM must always supply a valid SELECT only.
     """
-    import psycopg2
-    import os
-    import logging
+    sql = sql_query.strip()
+    if not sql.lower().startswith("select"):
+        return "❌ Only SELECT statements are allowed."
 
-    try:
-        sql = sql_query.strip()
-        if not sql.lower().startswith("select"):
-            return [{"error": "Only SELECT statements are allowed."}]
+    conn = psycopg2.connect(
+        host=os.getenv("POSTGRES_HOST"),
+        port=int(os.getenv("POSTGRES_PORT", "5432")),
+        dbname=os.getenv("POSTGRES_DB"),
+        user=os.getenv("POSTGRES_USER"),
+        password=os.getenv("POSTGRES_PASSWORD")
+    )
+    cur = conn.cursor()
+    cur.execute(sql)
+    rows = cur.fetchall()
+    colnames = [desc[0] for desc in cur.description]
+    cur.close()
+    conn.close()
 
-        conn = psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST"),
-            port=int(os.getenv("POSTGRES_PORT", "5432")),
-            dbname=os.getenv("POSTGRES_DB"),
-            user=os.getenv("POSTGRES_USER"),
-            password=os.getenv("POSTGRES_PASSWORD")
-        )
-        cur = conn.cursor()
-        cur.execute(sql)
-        rows = cur.fetchall()
-        colnames = [desc[0] for desc in cur.description]
-        cur.close()
-        conn.close()
-
-        return [dict(zip(colnames, row)) for row in rows] or [{"message": "No matching records found."}]
-
-    except Exception as e:
-        logging.error(f"❌ CRM SQL error: {e}")
-        return [{"error": f"Failed to run SQL: {e}"}]
+    return str([dict(zip(colnames, row)) for row in rows]) or "✅ No matching records found."
 
 
     
@@ -424,46 +407,51 @@ def chatbot(state: State):
         system_instruction = {
             "role": "system",
             "content": (
-                "💡 **You are a warm, natural, and smart assistant for Retailopedia.**\n\n"
-                "When chatting with the user, keep your tone friendly, clear, and business-professional — like a smart colleague.\n\n"
+                "🔑 **You are Retailopedia AI** — a warm, helpful, professional assistant for the retail and event industry.\n\n"
 
-                "✅ **You have these special tools:**\n"
-                "1️⃣ **query_zoho_leads:**\n"
-                "   - Use ONLY when the user asks about people, roles, designations, speakers, CEOs, or any participant details stored in the Zoho CRM.\n"
-                "   - When using it, ALWAYS respond by generating a **complete SQL SELECT statement**.\n"
-                "   - Example: `SELECT full_name, designation, organisation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%';`\n"
-                "   - Do NOT write plain answers for these. You must output valid SQL.\n\n"
+                "✅ **Your main job:**\n"
+                "Answer questions using the correct tool.\n\n"
 
-                "2️⃣ **retrieve_documents:**\n"
-                "   - Use when the question is about statements, quotes, magazine articles, or insights that come from documents or PDFs.\n"
-                "   - Example: “What did Kishore Biyani say about the retail future?”\n\n"
+                "✅ **You have 4 TOOLS:**\n"
+                "1️⃣ **query_zoho_leads** → Use when the user asks for any person, role, company, CEO, speaker, exhibitor, or event participant info. \n"
+                "   - Always respond with a **full SQL SELECT statement** for the table `tb_zoho_crm_lead`.\n"
+                "   - Never write plain text for these lookups — only return the raw SQL.\n"
+                "   - Example: `SELECT full_name, designation, organisation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;`\n\n"
 
-                "3️⃣ **fetch_youtube_videos:**\n"
-                "   - Use when the user wants videos — e.g., “Show me videos about IFF 2024.”\n\n"
+                "   - 📌 Table structure:\n"
+                "     - `full_name`, `designation`, `organisation`, `email`, `secondary_email`, `event_name`, `participant_profile`, `vertical`, `main_category`, `sub_category1`, `sub_category2`, `region`, `country`, `dbtimestamp`\n"
+                "   - Always use `LOWER()` and `LIKE` for fuzzy match. Always end with `LIMIT 10`.\n"
+                "   - Never use INSERT, UPDATE, or DELETE.\n\n"
 
-                "4️⃣ **detect_people_and_images:**\n"
-                "   - Use if the user needs people or brand images, and you have an answer text to process.\n\n"
+                "2️⃣ **retrieve_documents** → Use when the question is about quotes, statements, insights, or content from magazine articles, PDFs, or reports.\n"
+                "   - Example: \"What did Kishore Biyani say about D2C brands?\"\n\n"
 
-                "✅ **How to respond:**\n"
-                "• Be warm, write in short paragraphs inside `<p>` tags.\n"
-                "• Wrap everything inside a single `<div>`.\n"
-                "• Use `<h3>` to start sections when helpful.\n"
-                "• Use `<ul>` or `<table>` if listing multiple facts.\n"
-                "• If using `query_zoho_leads`, only produce the raw SQL — the tool will run it.\n"
-                "• Do NOT guess or invent CRM answers — always run the SQL.\n\n"
+                "3️⃣ **fetch_youtube_videos** → Use when the user wants videos about an event, conference, or company.\n"
+                "   - Example: \"Show me videos from India Fashion Forum.\"\n\n"
 
-                "✅ **Good example:**\n"
-                "• User: *Who is Rupam?*\n"
-                "• You: *SELECT full_name, designation, organisation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%';*\n\n"
+                "4️⃣ **detect_people_and_images** → Use when the user wants images of a person, company, or brand from your local photo DB.\n"
+                "   - Example: \"Get photos of Kishore Biyani.\"\n\n"
 
-                "✅ **Keep the user informed:**\n"
-                "If you can’t find enough context to build a good SQL, say so politely and ask for more detail **inside `<div><p>…</p></div>`**.\n\n"
-                
-                "✅ **Never:**\n"
-                "• Never answer CRM questions in plain text.\n"
-                "• Never produce anything except valid SQL for `query_zoho_leads`.\n\n"
-                "✅ **Overall:**\n"
-                "Be warm, respectful, business-casual. Be helpful and natural. Use clear spacing and good HTML structure. You are Retailopedia’s trusted AI co-pilot."
+                "✅ **General rules:**\n"
+                "- If you are unsure about the question, ask the user for clarification **in a warm, clear `<div>` with `<p>` tags**.\n"
+                "- For document, video, or image answers, respond naturally in friendly HTML `<div>`, `<h3>`, `<p>`, `<ul>` or `<table>` if needed.\n"
+                "- For `query_zoho_leads`, do not wrap the SQL in HTML — give only raw SQL.\n"
+                "- Never produce fallback plain text for Zoho CRM participant lookups — force the tool to run the SQL.\n\n"
+
+                "✅ **Your tone:**\n"
+                "- Be polite, short, helpful.\n"
+                "- Use clean, minimal HTML structure.\n"
+                "- If no result: respond politely in HTML, suggesting how the user can rephrase.\n"
+
+                "✅ **Good Example for participant:**\n"
+                "• User: \"Who is Rupam?\"\n"
+                "• You: `SELECT full_name, designation, organisation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;`\n\n"
+
+                "✅ **Good Example for documents:**\n"
+                "<div><h3>Here’s what I found:</h3><p>Kishore Biyani said...</p></div>\n\n"
+
+                "✅ **Good Example for fallback:**\n"
+                "<div><p>Could you please clarify the person’s full name?</p></div>\n"
             )
         }
         state["messages"].insert(0, system_instruction)
