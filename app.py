@@ -157,12 +157,32 @@ class QueryZohoLeadsArgs(BaseModel):
     query: str = Field(..., description="Search keywords for Zoho CRM fuzzy lookup")
     limit: int = Field(default=10, description="Max number of results (up to 10)")
 
+
+
+# Check on import
+if not all(DB_CONFIG.values()):
+    raise ValueError("❌ One or more DB env vars are missing. Check your .env!")
+
+class QueryZohoLeadsArgs(BaseModel):
+    query: str = Field(..., description="Search term for Zoho CRM leads")
+    limit: int = Field(default=10, description="Max results (1–10)")
+
 @tool("query_zoho_leads", args_schema=QueryZohoLeadsArgs, return_direct=True)
 def query_zoho_leads(query: str, limit: int = 10) -> str:
     """
-    Stronger fallback: unaccent + ILIKE partial + AND conditions for all words.
+    Search Zoho CRM leads using:
+    - ✅ AND match (all keywords)
+    - ✅ fallback whole input LIKE
+    - ✅ fallback OR match (any keyword)
     """
     search = query.strip()
+    DB_CONFIG = {
+    "host": os.getenv("POSTGRES_HOST"),
+    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+    "dbname": os.getenv("POSTGRES_STG_DB"),
+    "user": os.getenv("POSTGRES_STG_USER"),
+    "password": os.getenv("POSTGRES_STG_PASSWORD")
+    }   
     if not search:
         return "❌ Please provide a valid search term."
 
@@ -179,62 +199,88 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         "region", "country"
     ]
 
-    # ✅ Build AND conditions: all words must match somewhere
-    and_clauses = []
-    params = []
-    for kw in keywords:
-        or_parts = []
-        for field in fields:
-            or_parts.append(f"unaccent(LOWER({field})) ILIKE %s")
-            params.append(f"%{kw}%")
-        and_clauses.append(f"({' OR '.join(or_parts)})")
-
-    where_clause = " AND ".join(and_clauses)
-
-    sql = f"""
-        SELECT
-            id,
-            full_name,
-            organisation,
-            designation,
-            email,
-            event_name,
-            participant_profile,
-            region,
-            country,
-            dbtimestamp
-        FROM tb_zoho_crm_lead
-        WHERE {where_clause}
-        LIMIT %s;
-    """
-
-    params.append(max_results)
-
-    print("🟢 Running unaccent ILIKE SQL:\n", sql)
-    print("🟢 Params:", params)
-
-    conn = psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST"),
-            port= int(os.getenv("POSTGRES_PORT", "5432")),
-            dbname=os.getenv("POSTGRES_STG_DB"),
-            user=os.getenv("POSTGRES_STG_USER"),
-            password=os.getenv("POSTGRES_STG_PASSWORD")
-        )
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(sql, params)
+        # ✅ 1️⃣ Strong AND: all words must match somewhere
+        and_clauses = []
+        and_params = []
+        for kw in keywords:
+            or_parts = []
+            for field in fields:
+                or_parts.append(f"unaccent(LOWER({field})) ILIKE %s")
+                and_params.append(f"%{kw}%")
+            and_clauses.append(f"({' OR '.join(or_parts)})")
+
+        sql_and = f"""
+            SELECT
+                id, full_name, organisation, designation,
+                email, event_name, participant_profile, region,
+                country, dbtimestamp
+            FROM tb_zoho_crm_lead
+            WHERE {' AND '.join(and_clauses)}
+            LIMIT %s;
+        """
+        and_params.append(max_results)
+        print("🟢 AND SQL:", sql_and)
+        cur.execute(sql_and, and_params)
         rows = cur.fetchall()
 
+        # ✅ 2️⃣ fallback: whole input LIKE
+        if not rows:
+            print("🔄 Fallback: whole input LIKE")
+            like_clauses = []
+            like_params = []
+            for field in fields:
+                like_clauses.append(f"unaccent(LOWER({field})) ILIKE %s")
+                like_params.append(f"%{search.lower()}%")
+            sql_like = f"""
+                SELECT
+                    id, full_name, organisation, designation,
+                    email, event_name, participant_profile, region,
+                    country, dbtimestamp
+                FROM tb_zoho_crm_lead
+                WHERE {' OR '.join(like_clauses)}
+                LIMIT %s;
+            """
+            like_params.append(max_results)
+            print("🟢 LIKE SQL:", sql_like)
+            cur.execute(sql_like, like_params)
+            rows = cur.fetchall()
+
+        # ✅ 3️⃣ fallback: OR each keyword
+        if not rows and len(keywords) > 1:
+            print("🔄 Fallback: OR each word")
+            or_clauses = []
+            or_params = []
+            for kw in keywords:
+                for field in fields:
+                    or_clauses.append(f"unaccent(LOWER({field})) ILIKE %s")
+                    or_params.append(f"%{kw}%")
+            sql_or = f"""
+                SELECT
+                    id, full_name, organisation, designation,
+                    email, event_name, participant_profile, region,
+                    country, dbtimestamp
+                FROM tb_zoho_crm_lead
+                WHERE {' OR '.join(or_clauses)}
+                LIMIT %s;
+            """
+            or_params.append(max_results)
+            print("🟢 OR SQL:", sql_or)
+            cur.execute(sql_or, or_params)
+            rows = cur.fetchall()
+
     except Exception as e:
-        return f"❌ Query failed: {e}"
+        return f"❌ DB query failed: {e}"
 
     finally:
         cur.close()
         conn.close()
 
     if not rows:
-        return f"❌ No matching leads found for '{query}'. Try a simpler name."
+        return f"❌ No leads found for '{query}'. Try different spelling or partial."
 
     output = []
     for idx, row in enumerate(rows, 1):
