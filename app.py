@@ -185,15 +185,13 @@ class QueryZohoLeadsArgs(BaseModel):
 @tool("query_zoho_leads", args_schema=QueryZohoLeadsArgs, return_direct=True)
 def query_zoho_leads(query: str, limit: int = 10) -> str:
     """
-    Fuzzy-search Zoho CRM leads using pg_trgm.
-    Splits keywords, matches individually, ranks by best similarity.
+    Fuzzy search Zoho CRM leads using pg_trgm, splitting keywords.
     """
     search = query.strip()
     if not search:
         return "❌ Please provide a valid search term."
 
     max_results = min(max(limit, 1), 10)
-
     keywords = [w.strip().lower() for w in search.split() if w.strip()]
     if not keywords:
         return "❌ No valid keywords found."
@@ -206,7 +204,6 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         "region", "country"
     ]
 
-    # 🔑 Build WHERE clause: each keyword against each field
     where_clauses = []
     params = []
     for kw in keywords:
@@ -216,7 +213,6 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
 
     where_clause = " OR ".join(where_clauses)
 
-    # 🔑 Build GREATEST(similarity(...)) for each field-keyword combo
     similarity_exprs = []
     for kw in keywords:
         for field in fields:
@@ -232,13 +228,8 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
             organisation,
             designation,
             email,
-            secondary_email,
             event_name,
             participant_profile,
-            vertical,
-            main_category,
-            sub_category1,
-            sub_category2,
             region,
             country,
             dbtimestamp,
@@ -252,7 +243,10 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
 
     params.append(max_results)
 
-    # ✅ Connect
+    # Debug output
+    print("🔍 Final SQL:\n", sql)
+    print("🔍 Params:", params)
+
     conn = psycopg2.connect(
         host=os.getenv("POSTGRES_HOST"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -265,56 +259,30 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(sql, params)
         rows = cur.fetchall()
-
     except Exception as e:
-        return f"❌ Zoho CRM query failed: {e}"
-
+        return f"❌ Query failed: {e}"
     finally:
         cur.close()
         conn.close()
 
     if not rows:
-        return f"🔍 No matching leads found for: '{query}'."
+        return f"❌ No leads found for: '{query}'."
 
-    output = []
+    out = []
     for idx, row in enumerate(rows, 1):
-        output.append(
+        out.append(
             f"{idx}. Name: {row.get('full_name') or 'N/A'} | "
-            f"Designation: {row.get('designation') or 'N/A'} | "
-            f"Organisation: {row.get('organisation') or 'N/A'} | "
+            f"Org: {row.get('organisation') or 'N/A'} | "
             f"Email: {row.get('email') or 'N/A'} | "
             f"Event: {row.get('event_name') or 'N/A'} | "
+            f"Profile: {row.get('participant_profile') or 'N/A'} | "
             f"Region: {row.get('region') or 'N/A'} | "
             f"Country: {row.get('country') or 'N/A'} | "
             f"Created: {row.get('dbtimestamp') or 'N/A'} | "
             f"Score: {round(row.get('score') or 0, 3)}"
         )
 
-    return "\n".join(output)
-
-
-
-
-    
-@tool
-def retrieve_documents(input: str) -> str:
-    """
-    📄 Document QA Tool: Use this tool when the user is asking for information that would
-    appear in magazine articles, reports, or documents (e.g., quotes, statements, opinions).
-
-    Examples:
-    - "What did Kishore Biyani say about the future of retail?"
-    - "Summarize the latest article about D2C brands."
-    -who is amitabh taneja?
-    - "What are the key insights from the latest India Retailing magazine?"
-    Returns: A relevant textual answer based on document similarity search.
-    """
-    qa = RetrievalQA.from_chain_type(
-        llm=ChatOpenAI(model="gpt-3.5-turbo", temperature=0),
-        retriever=vector_store.as_retriever(search_kwargs={"k": 10}),
-        return_source_documents=False
-    )
-    return qa.run(input)
+    return "\n".join(out)
 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
