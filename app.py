@@ -285,6 +285,26 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
     return "\n".join(out)
 
 @tool
+def retrieve_documents(input: str) -> str:
+    """
+    📄 Document QA Tool: Use this tool when the user is asking for information that would
+    appear in magazine articles, reports, or documents (e.g., quotes, statements, opinions).
+
+    Examples:
+    - "What did Kishore Biyani say about the future of retail?"
+    - "Summarize the latest article about D2C brands."
+    -who is amitabh taneja?
+    - "What are the key insights from the latest India Retailing magazine?"
+    Returns: A relevant textual answer based on document similarity search.
+    """
+    qa = RetrievalQA.from_chain_type(
+        llm=ChatOpenAI(model="gpt-3.5-turbo", temperature=0),
+        retriever=vector_store.as_retriever(search_kwargs={"k": 10}),
+        return_source_documents=False
+    )
+    return qa.run(input)
+    
+@tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
     📺 Fetch relevant YouTube videos from 'India Retailing'.
@@ -441,6 +461,7 @@ def detect_people_and_images(input: str) -> list:
 
     print("🎉 FINAL RESULTS:", results)
     return results
+    
 
 
 
