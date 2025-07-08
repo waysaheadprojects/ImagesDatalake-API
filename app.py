@@ -161,11 +161,20 @@ class QueryZohoLeadsArgs(BaseModel):
     limit: int = Field(default=10, description="Max number of results (up to 10)")
 
 # ✅ Production-grade tool with pg_trgm similarity & safe SQL
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
+
+class QueryZohoLeadsArgs(BaseModel):
+    query: str = Field(..., description="Search term for Zoho CRM leads (fuzzy search)")
+    limit: int = Field(default=10, description="Max results to return (1–10)")
+
 @tool("query_zoho_leads", args_schema=QueryZohoLeadsArgs, return_direct=True)
 def query_zoho_leads(query: str, limit: int = 10) -> str:
     """
-    Fuzzy-search Zoho CRM leads using PostgreSQL pg_trgm extension.
-    Searches multiple columns and ranks by similarity.
+    Fuzzy Zoho CRM participant lookup using pg_trgm + similarity threshold.
     """
 
     search_term = query.strip()
@@ -182,6 +191,7 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
+        # Minimum similarity threshold: 0.2 is typical for name/org
         sql = """
             SELECT
                 id,
@@ -215,7 +225,7 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
                     similarity(country, %(term)s)
                 ) AS score
             FROM tb_zoho_crm_lead
-            WHERE
+            WHERE (
                 full_name %% %(term)s OR
                 designation %% %(term)s OR
                 organisation %% %(term)s OR
@@ -229,6 +239,22 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
                 sub_category2 %% %(term)s OR
                 region %% %(term)s OR
                 country %% %(term)s
+            )
+            AND GREATEST(
+                similarity(full_name, %(term)s),
+                similarity(designation, %(term)s),
+                similarity(organisation, %(term)s),
+                similarity(email, %(term)s),
+                similarity(secondary_email, %(term)s),
+                similarity(event_name, %(term)s),
+                similarity(participant_profile, %(term)s),
+                similarity(vertical, %(term)s),
+                similarity(main_category, %(term)s),
+                similarity(sub_category1, %(term)s),
+                similarity(sub_category2, %(term)s),
+                similarity(region, %(term)s),
+                similarity(country, %(term)s)
+            ) > 0.5
             ORDER BY score DESC
             LIMIT %(limit)s;
         """
@@ -244,29 +270,23 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         conn.close()
 
     if not rows:
-        return f"🔍 No leads found for: '{search_term}'."
+        return f"🔍 Sorry, no matching leads found for: '{search_term}'."
 
     output = []
     for idx, row in enumerate(rows, 1):
-        entry = (
-            f"{idx}. Full Name: {row.get('full_name') or 'N/A'}\n"
-            f"   Designation: {row.get('designation') or 'N/A'}\n"
-            f"   Organisation: {row.get('organisation') or 'N/A'}\n"
-            f"   Email: {row.get('email') or 'N/A'}\n"
-            f"   Secondary Email: {row.get('secondary_email') or 'N/A'}\n"
-            f"   Event: {row.get('event_name') or 'N/A'}\n"
-            f"   Profile: {row.get('participant_profile') or 'N/A'}\n"
-            f"   Vertical: {row.get('vertical') or 'N/A'}\n"
-            f"   Main Category: {row.get('main_category') or 'N/A'}\n"
-            f"   Subcategory 1: {row.get('sub_category1') or 'N/A'}\n"
-            f"   Subcategory 2: {row.get('sub_category2') or 'N/A'}\n"
-            f"   Region: {row.get('region') or 'N/A'}\n"
-            f"   Country: {row.get('country') or 'N/A'}\n"
-            f"   Timestamp: {row.get('dbtimestamp') or 'N/A'}"
+        output.append(
+            f"{idx}. Name: {row.get('full_name') or 'N/A'} | "
+            f"Designation: {row.get('designation') or 'N/A'} | "
+            f"Org: {row.get('organisation') or 'N/A'} | "
+            f"Email: {row.get('email') or 'N/A'} | "
+            f"Event: {row.get('event_name') or 'N/A'} | "
+            f"Profile: {row.get('participant_profile') or 'N/A'} | "
+            f"Region: {row.get('region') or 'N/A'} | "
+            f"Country: {row.get('country') or 'N/A'} | "
+            f"Timestamp: {row.get('dbtimestamp') or 'N/A'}"
         )
-        output.append(entry)
 
-    return "\n\n".join(output)
+    return "\n".join(output)
 
 
 
