@@ -442,7 +442,7 @@ def detect_people_and_images(input: str) -> list:
             cursor.execute("""
                 SELECT title, encode(image_data_low, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
-                WHERE similarity(LOWER(tags), %s) > 0.3
+                WHERE similarity(LOWER(tags), %s) > 0.48
                    OR LOWER(tags) ILIKE %s
                 ORDER BY similarity(LOWER(tags), %s) DESC
                 LIMIT 500
