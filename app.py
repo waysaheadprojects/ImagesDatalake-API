@@ -214,12 +214,12 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
     print("🟢 Params:", params)
 
     conn = psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-        dbname=os.getenv("POSTGRES_DB"),
-        user=os.getenv("POSTGRES_USER"),
-        password=os.getenv("POSTGRES_PASSWORD")
-    )
+            host=os.getenv("POSTGRES_HOST"),
+            port= int(os.getenv("POSTGRES_PORT", "5432")),
+            dbname=os.getenv("POSTGRES_STG_DB"),
+            user=os.getenv("POSTGRES_STG_USER"),
+            password=os.getenv("POSTGRES_STG_PASSWORD")
+        )
 
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
