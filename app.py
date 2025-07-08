@@ -144,31 +144,86 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 
 # ----------------- Tool Definitions -----------------
+from langchain_core.tools import tool
+from typing import List
+import psycopg2
+import os
+import logging
+
 @tool
-def query_zoho_leads(sql_query: str) -> str:
+def query_zoho_leads(input_text: str) -> List[dict]:
     """
-    Runs a raw SELECT on tb_zoho_crm_lead.
-    The LLM must always supply a valid SELECT only.
+    🔍 Search Zoho CRM leads database for participants.
+    ✅ Uses fuzzy keyword matching across:
+      - full_name, email, organisation, event_name
+      - main_category, sub_category1, sub_category2, region, country
+
+    ➜ Returns up to 10 matches in clean human-readable form.
     """
-    sql = sql_query.strip()
-    if not sql.lower().startswith("select"):
-        return "❌ Only SELECT statements are allowed."
 
-    conn = psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-        dbname=os.getenv("POSTGRES_DB"),
-        user=os.getenv("POSTGRES_USER"),
-        password=os.getenv("POSTGRES_PASSWORD")
-    )
-    cur = conn.cursor()
-    cur.execute(sql)
-    rows = cur.fetchall()
-    colnames = [desc[0] for desc in cur.description]
-    cur.close()
-    conn.close()
+    try:
+        # Split input into lowercased keywords
+        keywords = [kw.strip() for kw in input_text.lower().split() if kw.strip()]
+        if not keywords:
+            return [{"response": "No valid keywords provided."}]
 
-    return str([dict(zip(colnames, row)) for row in rows]) or "✅ No matching records found."
+        # Fields to search
+        fields = [
+            "full_name", "email", "organisation", "event_name",
+            "main_category", "sub_category1", "sub_category2",
+            "region", "country"
+        ]
+
+        # Build dynamic WHERE clause with parameter placeholders
+        conditions = []
+        params = []
+        for field in fields:
+            for kw in keywords:
+                conditions.append(f"LOWER({field}) ILIKE %s")
+                params.append(f"%{kw}%")
+
+        where_clause = " OR ".join(conditions)
+
+        sql = f"""
+            SELECT 
+                full_name, email, organisation, designation, event_name
+            FROM tb_zoho_crm_lead
+            WHERE {where_clause}
+            LIMIT 10;
+        """
+
+        # Connect and run safely
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST"),
+            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            dbname=os.getenv("POSTGRES_STG_DB"),
+            user=os.getenv("POSTGRES_STG_USER"),
+            password=os.getenv("POSTGRES_STG_PASSWORD")
+        )
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            return [{"response": "❌ No matching participants found in Zoho CRM."}]
+
+        results = []
+        for full_name, email, org, designation, event in rows:
+            email_part = f"Email: {email}" if email else "Email not available."
+            designation_part = f"({designation})" if designation else ""
+            org_part = f"from {org}" if org else "from [Unknown Org]"
+            event_part = f"attended {event}" if event else ""
+
+            response = f"{full_name} {designation_part} {org_part} {event_part}. {email_part}".strip()
+            results.append({"response": response})
+
+        return results
+
+    except Exception as e:
+        logging.exception("❌ Zoho leads query failed:")
+        return [{"response": f"Query failed due to an internal error: {e}"}]
 
 
     
