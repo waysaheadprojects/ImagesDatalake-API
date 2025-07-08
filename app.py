@@ -160,8 +160,7 @@ class QueryZohoLeadsArgs(BaseModel):
 @tool("query_zoho_leads", args_schema=QueryZohoLeadsArgs, return_direct=True)
 def query_zoho_leads(query: str, limit: int = 10) -> str:
     """
-    Fuzzy search Zoho CRM leads using pg_trgm + fallback to LIKE if needed.
-    Splits input into keywords. Ranks by best similarity.
+    Stronger fallback: unaccent + ILIKE partial + AND conditions for all words.
     """
     search = query.strip()
     if not search:
@@ -180,22 +179,17 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         "region", "country"
     ]
 
-    where_clauses = []
+    # ✅ Build AND conditions: all words must match somewhere
+    and_clauses = []
     params = []
     for kw in keywords:
+        or_parts = []
         for field in fields:
-            where_clauses.append(f"{field} % %s")
-            params.append(kw)
+            or_parts.append(f"unaccent(LOWER({field})) ILIKE %s")
+            params.append(f"%{kw}%")
+        and_clauses.append(f"({' OR '.join(or_parts)})")
 
-    where_clause = " OR ".join(where_clauses)
-
-    similarity_exprs = []
-    for kw in keywords:
-        for field in fields:
-            similarity_exprs.append(f"similarity({field}, %s)")
-            params.append(kw)
-
-    similarity_score = f"GREATEST({', '.join(similarity_exprs)})"
+    where_clause = " AND ".join(and_clauses)
 
     sql = f"""
         SELECT
@@ -208,18 +202,15 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
             participant_profile,
             region,
             country,
-            dbtimestamp,
-            {similarity_score} AS score
+            dbtimestamp
         FROM tb_zoho_crm_lead
-        WHERE ({where_clause})
-          AND {similarity_score} > 0.1
-        ORDER BY score DESC
+        WHERE {where_clause}
         LIMIT %s;
     """
 
     params.append(max_results)
 
-    print("🟢 Running fuzzy SQL:\n", sql)
+    print("🟢 Running unaccent ILIKE SQL:\n", sql)
     print("🟢 Params:", params)
 
     conn = psycopg2.connect(
@@ -235,37 +226,6 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         cur.execute(sql, params)
         rows = cur.fetchall()
 
-        # ✅ Fallback: if no rows, try plain LIKE for each keyword
-        if not rows:
-            print("🔄 No trigram hits, falling back to LIKE...")
-            like_clauses = []
-            like_params = []
-            for kw in keywords:
-                for field in fields:
-                    like_clauses.append(f"LOWER({field}) LIKE %s")
-                    like_params.append(f"%{kw}%")
-            like_sql = f"""
-                SELECT
-                    id,
-                    full_name,
-                    organisation,
-                    designation,
-                    email,
-                    event_name,
-                    participant_profile,
-                    region,
-                    country,
-                    dbtimestamp
-                FROM tb_zoho_crm_lead
-                WHERE {' OR '.join(like_clauses)}
-                LIMIT %s;
-            """
-            like_params.append(max_results)
-            print("🟢 Running fallback LIKE SQL:\n", like_sql)
-            print("🟢 LIKE Params:", like_params)
-            cur.execute(like_sql, like_params)
-            rows = cur.fetchall()
-
     except Exception as e:
         return f"❌ Query failed: {e}"
 
@@ -274,7 +234,7 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         conn.close()
 
     if not rows:
-        return f"❌ No leads found for '{query}'. Try a different spelling or shorter name."
+        return f"❌ No matching leads found for '{query}'. Try a simpler name."
 
     output = []
     for idx, row in enumerate(rows, 1):
