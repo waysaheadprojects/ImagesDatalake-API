@@ -145,37 +145,28 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 # ----------------- Tool Definitions -----------------
 @tool
-def query_zoho_leads(input_text: str) -> list:
+def query_zoho_leads(sql_query: str) -> list:
     """
-    🔍 Universal Zoho CRM Lookup Tool — 100% LLM-driven
+    🔍 Runs a raw SELECT SQL on the Zoho CRM leads table.
 
-    👉 How it works:
-    --------------------------
-    - The LLM writes a full SELECT query: e.g.
-      SELECT full_name, designation, organisation
-      FROM tb_zoho_crm_lead
-      WHERE LOWER(organisation) LIKE '%waysahead%' AND LOWER(designation) LIKE '%ceo%'
-      LIMIT 1;
+    👉 LLM must supply the entire SQL statement, e.g.:
+       SELECT full_name, designation, organisation
+       FROM tb_zoho_crm_lead
+       WHERE LOWER(full_name) LIKE '%rupam%';
 
-    - This tool runs it *exactly as is*, but only if it starts with SELECT.
-
-    - No parsing, no regex, no Python-level keyword checks.
-    --------------------------
-
-    ✅ Returns:
-    - A list of rows as dictionaries.
+    ✅ Enforces:
+    - SELECT-only.
+    - Returns all rows as dicts.
     """
     import psycopg2
     import os
     import logging
 
-    sql_query = input_text.strip()
-
-    # Only allow SELECT for safety
-    if not sql_query.lower().startswith("select"):
-        return [{"error": "Only SELECT statements are allowed."}]
-
     try:
+        sql = sql_query.strip()
+        if not sql.lower().startswith("select"):
+            return [{"error": "Only SELECT statements are allowed."}]
+
         conn = psycopg2.connect(
             host=os.getenv("POSTGRES_HOST"),
             port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -184,19 +175,17 @@ def query_zoho_leads(input_text: str) -> list:
             password=os.getenv("POSTGRES_PASSWORD")
         )
         cur = conn.cursor()
-        cur.execute(sql_query)
+        cur.execute(sql)
         rows = cur.fetchall()
         colnames = [desc[0] for desc in cur.description]
         cur.close()
         conn.close()
 
-        results = [dict(zip(colnames, row)) for row in rows]
-
-        return results if results else [{"message": "No matching records found."}]
+        return [dict(zip(colnames, row)) for row in rows] or [{"message": "No matching records found."}]
 
     except Exception as e:
-        logging.error(f"❌ Zoho CRM raw SQL failed: {e}")
-        return [{"error": f"Internal error while running SQL: {e}"}]
+        logging.error(f"❌ CRM SQL error: {e}")
+        return [{"error": f"Failed to run SQL: {e}"}]
 
 
     
