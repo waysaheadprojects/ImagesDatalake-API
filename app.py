@@ -147,164 +147,57 @@ def get_s3_url_by_filename(file_name: str) -> str:
 @tool
 def query_zoho_leads(input_text: str) -> list:
     """
-    🔍 Intelligent Zoho CRM Participant Lookup Tool
+    🔍 Universal Zoho CRM Lookup Tool — 100% LLM-driven
 
-    This tool searches the `tb_zoho_crm_lead` table dynamically based on 
-    the natural language query provided by the user.
+    👉 How it works:
+    --------------------------
+    - The LLM writes a full SELECT query: e.g.
+      SELECT full_name, designation, organisation
+      FROM tb_zoho_crm_lead
+      WHERE LOWER(organisation) LIKE '%waysahead%' AND LOWER(designation) LIKE '%ceo%'
+      LIMIT 1;
 
-    ----------------------------------------
-    📌 **How it works**
-    ----------------------------------------
-    - **Flexible Profile Detection:**  
-      If the input text contains participant role keywords like "speaker", 
-      "exhibitor", "panelist", "sponsor", "moderator", or any other 
-      valid participant profile, the tool will add an explicit filter:  
-      `participant_profile = '<detected profile>'`.
+    - This tool runs it *exactly as is*, but only if it starts with SELECT.
 
-    - **Event Matching:**  
-      If the input mentions an event name or any event-related keyword 
-      (e.g., "PRC 2024", "India Fashion Forum", "Retail Summit"), the tool 
-      safely filters results by matching `event_name` with a `LIKE` condition.
+    - No parsing, no regex, no Python-level keyword checks.
+    --------------------------
 
-    - **Combined Filters:**  
-      If both a participant role **and** an event are detected in the same query, 
-      both filters will be applied, ensuring precise results.
-
-    - **Fuzzy Fallback:**  
-      If the input does not match any known participant profiles or event patterns, 
-      the tool automatically falls back to a multi-field fuzzy keyword match 
-      across `full_name`, `organisation`, `email`, `vertical`, `main_category`, 
-      `region`, `country`, and other relevant text fields.
-
-    - **Safe Query:**  
-      The WHERE clause is built dynamically but always uses parameterized 
-      `LIKE` patterns to prevent SQL injection risks.
-
-    ----------------------------------------
-    ✅ **Returns**
-    ----------------------------------------
-    - A list of dictionaries, each containing structured participant data:  
-      • `full_name`  
-      • `designation`  
-      • `organisation`  
-      • `event_name`  
-      • `participant_profile`  
-      • `email`, `secondary_email`  
-      • `region`, `country`  
-      • `vertical`, `main_category`, `sub_category1`, `sub_category2`  
-      • `created_at` timestamp
-
-    - If no results match, a single item with `{"message": "No matching participants found."}` is returned.
-
-    ----------------------------------------
-    ✅ **Example Queries it can handle**
-    ----------------------------------------
-    - "Name some **speakers** at PRC 2024"
-    - "List **exhibitors** for India Food Forum"
-    - "Find **panelists** at the Retail Summit"
-    - "Show participants from **Tata CLiQ** at PRC"
-    - "Any **moderators** for IFF 2024?"
-
-    ----------------------------------------
-    ⚡ **Key Benefits**
-    ----------------------------------------
-    - One universal tool for all roles & events — no separate endpoints needed.
-    - Great for agentic LLM workflows — the LLM just feeds the user’s natural text.
-    - Ensures precise, relevant results — no random noise.
-    - Always safe and efficient for production.
-
+    ✅ Returns:
+    - A list of rows as dictionaries.
     """
     import psycopg2
     import os
     import logging
 
-    input_clean = input_text.strip()
-    keywords = input_clean.split()
-    phrase = f"%{input_clean.lower()}%"
+    sql_query = input_text.strip()
 
-    results = []
+    # Only allow SELECT for safety
+    if not sql_query.lower().startswith("select"):
+        return [{"error": "Only SELECT statements are allowed."}]
 
     try:
         conn = psycopg2.connect(
             host=os.getenv("POSTGRES_HOST"),
             port=int(os.getenv("POSTGRES_PORT", "5432")),
-            dbname=os.getenv("POSTGRES_STG_DB"),
-            user=os.getenv("POSTGRES_STG_USER"),
-            password=os.getenv("POSTGRES_STG_PASSWORD")
+            dbname=os.getenv("POSTGRES_DB"),
+            user=os.getenv("POSTGRES_USER"),
+            password=os.getenv("POSTGRES_PASSWORD")
         )
         cur = conn.cursor()
-
-        # 👀 1️⃣ Heuristic: If input is likely a name, make full_name exact
-        where_clauses = []
-        params = []
-
-        if len(keywords) >= 2 and all(w[0].isupper() for w in keywords):
-            where_clauses.append("LOWER(full_name) = %s")
-            params.append(input_clean.lower())
-        else:
-            # 2️⃣ Otherwise build fuzzy across smart fields
-            fuzzy_fields = [
-                "LOWER(full_name)", "LOWER(email)", "LOWER(secondary_email)",
-                "LOWER(organisation)", "LOWER(event_name)", "LOWER(participant_profile)",
-                "LOWER(vertical)", "LOWER(main_category)", "LOWER(sub_category1)",
-                "LOWER(sub_category2)", "LOWER(region)", "LOWER(country)"
-            ]
-
-            for word in keywords:
-                word_pattern = f"%{word.lower()}%"
-                for field in fuzzy_fields:
-                    where_clauses.append(f"{field} LIKE %s")
-                    params.append(word_pattern)
-
-        where_sql = " OR ".join(where_clauses) if where_clauses else "1=1"
-
-        sql = f"""
-            SELECT id, event_name, participant_profile, full_name, designation,
-                   organisation, email, secondary_email, vertical, main_category,
-                   sub_category1, sub_category2, region, country, dbtimestamp
-            FROM public.tb_zoho_crm_lead
-            WHERE {where_sql}
-            LIMIT 50;
-        """
-
-        cur.execute(sql, tuple(params))
+        cur.execute(sql_query)
         rows = cur.fetchall()
+        colnames = [desc[0] for desc in cur.description]
         cur.close()
         conn.close()
 
-        if rows:
-            for row in rows:
-                (
-                    id, event_name, participant_profile, full_name, designation,
-                    organisation, email, secondary_email, vertical, main_category,
-                    sub_category1, sub_category2, region, country, dbtimestamp
-                ) = row
+        results = [dict(zip(colnames, row)) for row in rows]
 
-                results.append({
-                    "id": id,
-                    "event_name": event_name,
-                    "participant_profile": participant_profile,
-                    "full_name": full_name,
-                    "designation": designation,
-                    "organisation": organisation,
-                    "email": email or "Not available",
-                    "secondary_email": secondary_email or "Not available",
-                    "vertical": vertical,
-                    "main_category": main_category,
-                    "sub_category1": sub_category1,
-                    "sub_category2": sub_category2,
-                    "region": region,
-                    "country": country,
-                    "created_at": str(dbtimestamp)
-                })
-        else:
-            results.append({"message": "No matching participants found for your input."})
-
-        return results
+        return results if results else [{"message": "No matching records found."}]
 
     except Exception as e:
-        logging.error(f"❌ Zoho CRM dynamic query failed: {e}")
-        return [{"message": "Internal error while querying CRM."}]
+        logging.error(f"❌ Zoho CRM raw SQL failed: {e}")
+        return [{"error": f"Internal error while running SQL: {e}"}]
+
 
     
 @tool
