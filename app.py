@@ -143,33 +143,8 @@ def get_s3_url_by_filename(file_name: str) -> str:
     return ""
 
 
-# ----------------- Tool Definitions -----------------
-import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, Field
-from langchain_core.tools import tool
-
-# ✅ Pydantic args schema — safe for LangChain bindings
-class QueryZohoLeadsArgs(BaseModel):
-    """
-    Input for query_zoho_leads:
-    - query: Search keywords for fuzzy match
-    - limit: Max results (1–10)
-    """
-    query: str = Field(..., description="Search keywords for Zoho CRM fuzzy lookup")
-    limit: int = Field(default=10, description="Max number of results (up to 10)")
-
+# ----------------- Tool Definitions ----------------
 # ✅ Production-grade tool with pg_trgm similarity & safe SQL
-import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, Field
-from langchain_core.tools import tool
-
-class QueryZohoLeadsArgs(BaseModel):
-    query: str = Field(..., description="Search term for Zoho CRM leads (fuzzy search)")
-    limit: int = Field(default=10, description="Max results to return (1–10)")
 
 import os
 import psycopg2
@@ -185,7 +160,8 @@ class QueryZohoLeadsArgs(BaseModel):
 @tool("query_zoho_leads", args_schema=QueryZohoLeadsArgs, return_direct=True)
 def query_zoho_leads(query: str, limit: int = 10) -> str:
     """
-    Fuzzy search Zoho CRM leads using pg_trgm, splitting keywords.
+    Fuzzy search Zoho CRM leads using pg_trgm + fallback to LIKE if needed.
+    Splits input into keywords. Ranks by best similarity.
     """
     search = query.strip()
     if not search:
@@ -236,16 +212,15 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
             {similarity_score} AS score
         FROM tb_zoho_crm_lead
         WHERE ({where_clause})
-          AND {similarity_score} > 0.15
+          AND {similarity_score} > 0.1
         ORDER BY score DESC
         LIMIT %s;
     """
 
     params.append(max_results)
 
-    # Debug output
-    print("🔍 Final SQL:\n", sql)
-    print("🔍 Params:", params)
+    print("🟢 Running fuzzy SQL:\n", sql)
+    print("🟢 Params:", params)
 
     conn = psycopg2.connect(
         host=os.getenv("POSTGRES_HOST"),
@@ -259,18 +234,51 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(sql, params)
         rows = cur.fetchall()
+
+        # ✅ Fallback: if no rows, try plain LIKE for each keyword
+        if not rows:
+            print("🔄 No trigram hits, falling back to LIKE...")
+            like_clauses = []
+            like_params = []
+            for kw in keywords:
+                for field in fields:
+                    like_clauses.append(f"LOWER({field}) LIKE %s")
+                    like_params.append(f"%{kw}%")
+            like_sql = f"""
+                SELECT
+                    id,
+                    full_name,
+                    organisation,
+                    designation,
+                    email,
+                    event_name,
+                    participant_profile,
+                    region,
+                    country,
+                    dbtimestamp
+                FROM tb_zoho_crm_lead
+                WHERE {' OR '.join(like_clauses)}
+                LIMIT %s;
+            """
+            like_params.append(max_results)
+            print("🟢 Running fallback LIKE SQL:\n", like_sql)
+            print("🟢 LIKE Params:", like_params)
+            cur.execute(like_sql, like_params)
+            rows = cur.fetchall()
+
     except Exception as e:
         return f"❌ Query failed: {e}"
+
     finally:
         cur.close()
         conn.close()
 
     if not rows:
-        return f"❌ No leads found for: '{query}'."
+        return f"❌ No leads found for '{query}'. Try a different spelling or shorter name."
 
-    out = []
+    output = []
     for idx, row in enumerate(rows, 1):
-        out.append(
+        output.append(
             f"{idx}. Name: {row.get('full_name') or 'N/A'} | "
             f"Org: {row.get('organisation') or 'N/A'} | "
             f"Email: {row.get('email') or 'N/A'} | "
@@ -278,11 +286,10 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
             f"Profile: {row.get('participant_profile') or 'N/A'} | "
             f"Region: {row.get('region') or 'N/A'} | "
             f"Country: {row.get('country') or 'N/A'} | "
-            f"Created: {row.get('dbtimestamp') or 'N/A'} | "
-            f"Score: {round(row.get('score') or 0, 3)}"
+            f"Created: {row.get('dbtimestamp') or 'N/A'}"
         )
 
-    return "\n".join(out)
+    return "\n".join(output)
 
 @tool
 def retrieve_documents(input: str) -> str:
