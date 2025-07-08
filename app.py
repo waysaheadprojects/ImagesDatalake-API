@@ -144,68 +144,130 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 
 # ----------------- Tool Definitions -----------------
-@tool
-def query_zoho_leads(input_text: str) -> List[dict]:
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
+
+# ✅ Pydantic args schema — safe for LangChain bindings
+class QueryZohoLeadsArgs(BaseModel):
     """
-    🔍 Search for participant information in the Zoho CRM leads database. Use this tool if asked about events such as PRC 2024, India Fashion Forum etc.
-
-    This tool queries `tb_zoho_crm_lead` using fuzzy keyword matching across:
-    - full_name, email, organisation, event_name
-    - main_category, sub_category1, sub_category2
-    - region, country
-
-    ✅ Returns all matching records (max 10) formatted like:
-    "Gopal Asthana (CEO) from Tata CLiQ attended India Fashion Forum 2024. Email: asthanagopal@tatacliq.com."
-
-    If no email is found, it will say "Email not available."
+    Input for query_zoho_leads:
+    - query: Search keywords for fuzzy match
+    - limit: Max results (1–10)
     """
+    query: str = Field(..., description="Search keywords for Zoho CRM fuzzy lookup")
+    limit: int = Field(default=10, description="Max number of results (up to 10)")
+
+# ✅ Production-grade tool with pg_trgm similarity & safe SQL
+@tool("query_zoho_leads", args_schema=QueryZohoLeadsArgs, return_direct=True)
+def query_zoho_leads(query: str, limit: int = 10) -> str:
+    """
+    Fuzzy-search Zoho CRM leads using PostgreSQL pg_trgm extension.
+    Searches multiple columns and ranks by similarity.
+    """
+
+    search_term = query.strip()
+    max_results = min(max(limit, 1), 10)
+
+    conn = psycopg2.connect(
+        host=os.getenv("POSTGRES_HOST"),
+        port=int(os.getenv("POSTGRES_PORT", "5432")),
+        dbname=os.getenv("POSTGRES_DB"),
+        user=os.getenv("POSTGRES_USER"),
+        password=os.getenv("POSTGRES_PASSWORD")
+    )
 
     try:
-        keywords = input_text.lower().split()
-        fields = [
-            "full_name", "email", "organisation", "event_name",
-            "main_category", "sub_category1", "sub_category2",
-            "region", "country"
-        ]
-        clause = " OR ".join([f"LOWER({f}) LIKE '%{k}%'" for f in fields for k in keywords])
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        sql = f"""
-            SELECT 
-                full_name, email, organisation, designation, event_name
+        sql = """
+            SELECT
+                id,
+                full_name,
+                designation,
+                organisation,
+                email,
+                secondary_email,
+                event_name,
+                participant_profile,
+                vertical,
+                main_category,
+                sub_category1,
+                sub_category2,
+                region,
+                country,
+                dbtimestamp,
+                GREATEST(
+                    similarity(full_name, %(term)s),
+                    similarity(designation, %(term)s),
+                    similarity(organisation, %(term)s),
+                    similarity(email, %(term)s),
+                    similarity(secondary_email, %(term)s),
+                    similarity(event_name, %(term)s),
+                    similarity(participant_profile, %(term)s),
+                    similarity(vertical, %(term)s),
+                    similarity(main_category, %(term)s),
+                    similarity(sub_category1, %(term)s),
+                    similarity(sub_category2, %(term)s),
+                    similarity(region, %(term)s),
+                    similarity(country, %(term)s)
+                ) AS score
             FROM tb_zoho_crm_lead
-            WHERE {clause}
-            LIMIT 100;
+            WHERE
+                full_name %% %(term)s OR
+                designation %% %(term)s OR
+                organisation %% %(term)s OR
+                email %% %(term)s OR
+                secondary_email %% %(term)s OR
+                event_name %% %(term)s OR
+                participant_profile %% %(term)s OR
+                vertical %% %(term)s OR
+                main_category %% %(term)s OR
+                sub_category1 %% %(term)s OR
+                sub_category2 %% %(term)s OR
+                region %% %(term)s OR
+                country %% %(term)s
+            ORDER BY score DESC
+            LIMIT %(limit)s;
         """
-        conn = psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST"),
-            port= int(os.getenv("POSTGRES_PORT", "5432")),
-            dbname=os.getenv("POSTGRES_STG_DB"),
-            user=os.getenv("POSTGRES_STG_USER"),
-            password=os.getenv("POSTGRES_STG_PASSWORD")
-        )
 
-        cursor = conn.cursor()
-        cursor.execute(sql)
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        if rows:
-            results = []
-            for row in rows:
-                full_name, email, org, designation, event = row
-                email_part = f"Email: {email}" if email else "Email not available."
-                response = (
-                    f"{full_name} ({designation}) from {org} attended {event}. {email_part}"
-                )
-                results.append({"response": response})
-            return results
-        else:
-            return [{"response": "No matching participants found in Zoho CRM."}]
+        cur.execute(sql, {"term": search_term, "limit": max_results})
+        rows = cur.fetchall()
 
     except Exception as e:
-        logging.error(f"❌ Zoho leads query failed: {e}")
-        return [{"response": "Query failed due to an internal error."}]
+        return f"❌ Zoho CRM query failed: {e}"
+
+    finally:
+        cur.close()
+        conn.close()
+
+    if not rows:
+        return f"🔍 No leads found for: '{search_term}'."
+
+    output = []
+    for idx, row in enumerate(rows, 1):
+        entry = (
+            f"{idx}. Full Name: {row.get('full_name') or 'N/A'}\n"
+            f"   Designation: {row.get('designation') or 'N/A'}\n"
+            f"   Organisation: {row.get('organisation') or 'N/A'}\n"
+            f"   Email: {row.get('email') or 'N/A'}\n"
+            f"   Secondary Email: {row.get('secondary_email') or 'N/A'}\n"
+            f"   Event: {row.get('event_name') or 'N/A'}\n"
+            f"   Profile: {row.get('participant_profile') or 'N/A'}\n"
+            f"   Vertical: {row.get('vertical') or 'N/A'}\n"
+            f"   Main Category: {row.get('main_category') or 'N/A'}\n"
+            f"   Subcategory 1: {row.get('sub_category1') or 'N/A'}\n"
+            f"   Subcategory 2: {row.get('sub_category2') or 'N/A'}\n"
+            f"   Region: {row.get('region') or 'N/A'}\n"
+            f"   Country: {row.get('country') or 'N/A'}\n"
+            f"   Timestamp: {row.get('dbtimestamp') or 'N/A'}"
+        )
+        output.append(entry)
+
+    return "\n\n".join(output)
+
 
 
 
