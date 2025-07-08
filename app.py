@@ -171,15 +171,88 @@ class QueryZohoLeadsArgs(BaseModel):
     query: str = Field(..., description="Search term for Zoho CRM leads (fuzzy search)")
     limit: int = Field(default=10, description="Max results to return (1–10)")
 
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
+
+# ✅ Pydantic args schema for LangChain
+class QueryZohoLeadsArgs(BaseModel):
+    query: str = Field(..., description="Search keywords for Zoho CRM fuzzy lookup")
+    limit: int = Field(default=10, description="Max number of results (up to 10)")
+
 @tool("query_zoho_leads", args_schema=QueryZohoLeadsArgs, return_direct=True)
 def query_zoho_leads(query: str, limit: int = 10) -> str:
     """
-    Fuzzy Zoho CRM participant lookup using pg_trgm + similarity threshold.
+    Fuzzy-search Zoho CRM leads using pg_trgm.
+    Splits keywords, matches individually, ranks by best similarity.
     """
+    search = query.strip()
+    if not search:
+        return "❌ Please provide a valid search term."
 
-    search_term = query.strip()
     max_results = min(max(limit, 1), 10)
 
+    keywords = [w.strip().lower() for w in search.split() if w.strip()]
+    if not keywords:
+        return "❌ No valid keywords found."
+
+    fields = [
+        "full_name", "organisation", "designation",
+        "email", "secondary_email", "event_name",
+        "participant_profile", "vertical",
+        "main_category", "sub_category1", "sub_category2",
+        "region", "country"
+    ]
+
+    # 🔑 Build WHERE clause: each keyword against each field
+    where_clauses = []
+    params = []
+    for kw in keywords:
+        for field in fields:
+            where_clauses.append(f"{field} % %s")
+            params.append(kw)
+
+    where_clause = " OR ".join(where_clauses)
+
+    # 🔑 Build GREATEST(similarity(...)) for each field-keyword combo
+    similarity_exprs = []
+    for kw in keywords:
+        for field in fields:
+            similarity_exprs.append(f"similarity({field}, %s)")
+            params.append(kw)
+
+    similarity_score = f"GREATEST({', '.join(similarity_exprs)})"
+
+    sql = f"""
+        SELECT
+            id,
+            full_name,
+            organisation,
+            designation,
+            email,
+            secondary_email,
+            event_name,
+            participant_profile,
+            vertical,
+            main_category,
+            sub_category1,
+            sub_category2,
+            region,
+            country,
+            dbtimestamp,
+            {similarity_score} AS score
+        FROM tb_zoho_crm_lead
+        WHERE ({where_clause})
+          AND {similarity_score} > 0.15
+        ORDER BY score DESC
+        LIMIT %s;
+    """
+
+    params.append(max_results)
+
+    # ✅ Connect
     conn = psycopg2.connect(
         host=os.getenv("POSTGRES_HOST"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -190,76 +263,7 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
 
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-
-        # Minimum similarity threshold: 0.2 is typical for name/org
-        sql = """
-            SELECT
-                id,
-                full_name,
-                designation,
-                organisation,
-                email,
-                secondary_email,
-                event_name,
-                participant_profile,
-                vertical,
-                main_category,
-                sub_category1,
-                sub_category2,
-                region,
-                country,
-                dbtimestamp,
-                GREATEST(
-                    similarity(full_name, %(term)s),
-                    similarity(designation, %(term)s),
-                    similarity(organisation, %(term)s),
-                    similarity(email, %(term)s),
-                    similarity(secondary_email, %(term)s),
-                    similarity(event_name, %(term)s),
-                    similarity(participant_profile, %(term)s),
-                    similarity(vertical, %(term)s),
-                    similarity(main_category, %(term)s),
-                    similarity(sub_category1, %(term)s),
-                    similarity(sub_category2, %(term)s),
-                    similarity(region, %(term)s),
-                    similarity(country, %(term)s)
-                ) AS score
-            FROM tb_zoho_crm_lead
-            WHERE (
-                full_name %% %(term)s OR
-                designation %% %(term)s OR
-                organisation %% %(term)s OR
-                email %% %(term)s OR
-                secondary_email %% %(term)s OR
-                event_name %% %(term)s OR
-                participant_profile %% %(term)s OR
-                vertical %% %(term)s OR
-                main_category %% %(term)s OR
-                sub_category1 %% %(term)s OR
-                sub_category2 %% %(term)s OR
-                region %% %(term)s OR
-                country %% %(term)s
-            )
-            AND GREATEST(
-                similarity(full_name, %(term)s),
-                similarity(designation, %(term)s),
-                similarity(organisation, %(term)s),
-                similarity(email, %(term)s),
-                similarity(secondary_email, %(term)s),
-                similarity(event_name, %(term)s),
-                similarity(participant_profile, %(term)s),
-                similarity(vertical, %(term)s),
-                similarity(main_category, %(term)s),
-                similarity(sub_category1, %(term)s),
-                similarity(sub_category2, %(term)s),
-                similarity(region, %(term)s),
-                similarity(country, %(term)s)
-            ) > 0.5
-            ORDER BY score DESC
-            LIMIT %(limit)s;
-        """
-
-        cur.execute(sql, {"term": search_term, "limit": max_results})
+        cur.execute(sql, params)
         rows = cur.fetchall()
 
     except Exception as e:
@@ -270,20 +274,20 @@ def query_zoho_leads(query: str, limit: int = 10) -> str:
         conn.close()
 
     if not rows:
-        return f"🔍 Sorry, no matching leads found for: '{search_term}'."
+        return f"🔍 No matching leads found for: '{query}'."
 
     output = []
     for idx, row in enumerate(rows, 1):
         output.append(
             f"{idx}. Name: {row.get('full_name') or 'N/A'} | "
             f"Designation: {row.get('designation') or 'N/A'} | "
-            f"Org: {row.get('organisation') or 'N/A'} | "
+            f"Organisation: {row.get('organisation') or 'N/A'} | "
             f"Email: {row.get('email') or 'N/A'} | "
             f"Event: {row.get('event_name') or 'N/A'} | "
-            f"Profile: {row.get('participant_profile') or 'N/A'} | "
             f"Region: {row.get('region') or 'N/A'} | "
             f"Country: {row.get('country') or 'N/A'} | "
-            f"Timestamp: {row.get('dbtimestamp') or 'N/A'}"
+            f"Created: {row.get('dbtimestamp') or 'N/A'} | "
+            f"Score: {round(row.get('score') or 0, 3)}"
         )
 
     return "\n".join(output)
