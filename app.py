@@ -144,118 +144,68 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 
 # ----------------- Tool Definitions -----------------
-from langchain_core.tools import tool
-from typing import List
-import psycopg2
-import os
-import logging
-
-
 @tool
 def query_zoho_leads(input_text: str) -> List[dict]:
     """
-    🔍 Search Zoho CRM leads using pg_trgm similarity.
-    ✅ Searches all relevant fields, ranks by highest similarity.
+    🔍 Search for participant information in the Zoho CRM leads database. Use this tool if asked about events such as PRC 2024, India Fashion Forum etc.
+
+    This tool queries `tb_zoho_crm_lead` using fuzzy keyword matching across:
+    - full_name, email, organisation, event_name
+    - main_category, sub_category1, sub_category2
+    - region, country
+
+    ✅ Returns all matching records (max 10) formatted like:
+    "Gopal Asthana (CEO) from Tata CLiQ attended India Fashion Forum 2024. Email: asthanagopal@tatacliq.com."
+
+    If no email is found, it will say "Email not available."
     """
 
     try:
-        keywords = [kw.strip() for kw in input_text.lower().split() if kw.strip()]
-        if not keywords:
-            return [{"response": "❌ No valid keywords provided."}]
-
+        keywords = input_text.lower().split()
         fields = [
-            "full_name", "email", "secondary_email", "organisation",
-            "designation", "event_name", "participant_profile",
-            "vertical", "main_category", "sub_category1",
-            "sub_category2", "region", "country"
+            "full_name", "email", "organisation", "event_name",
+            "main_category", "sub_category1", "sub_category2",
+            "region", "country"
         ]
-
-        conditions = []
-        params = []
-
-        for field in fields:
-            for kw in keywords:
-                conditions.append(f"{field} % %s")
-                params.append(kw)
-
-        where_clause = " OR ".join(conditions)
+        clause = " OR ".join([f"LOWER({f}) LIKE '%{k}%'" for f in fields for k in keywords])
 
         sql = f"""
             SELECT 
-                id,
-                full_name,
-                email,
-                secondary_email,
-                organisation,
-                designation,
-                event_name,
-                participant_profile,
-                vertical,
-                main_category,
-                sub_category1,
-                sub_category2,
-                region,
-                country,
-                dbtimestamp,
-                GREATEST(
-                    {', '.join([f"similarity({field}, %s)" for field in fields])}
-                ) AS score
+                full_name, email, organisation, designation, event_name
             FROM tb_zoho_crm_lead
-            WHERE {where_clause}
-            ORDER BY score DESC
-            LIMIT 10;
+            WHERE {clause}
+            LIMIT 100;
         """
-
-        params += keywords * len(fields)
-
         conn = psycopg2.connect(
             host=os.getenv("POSTGRES_HOST"),
-            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            port= int(os.getenv("POSTGRES_PORT", "5432")),
             dbname=os.getenv("POSTGRES_STG_DB"),
             user=os.getenv("POSTGRES_STG_USER"),
             password=os.getenv("POSTGRES_STG_PASSWORD")
         )
+
         cursor = conn.cursor()
-        cursor.execute(sql, params)
+        cursor.execute(sql)
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
 
-        if not rows:
-            return [{"response": "❌ No matches found in Zoho CRM."}]
-
-        results = []
-        for row in rows:
-            (
-                _id, full_name, email, secondary_email, org, designation,
-                event_name, profile, vertical, main_cat, sub_cat1,
-                sub_cat2, region, country, dbtimestamp, score
-            ) = row
-
-            response = (
-                f"Name: {full_name or 'N/A'} | "
-                f"Designation: {designation or 'N/A'} | "
-                f"Organisation: {org or 'N/A'} | "
-                f"Primary Email: {email or 'N/A'} | "
-                f"Secondary Email: {secondary_email or 'N/A'} | "
-                f"Event: {event_name or 'N/A'} | "
-                f"Profile: {profile or 'N/A'} | "
-                f"Vertical: {vertical or 'N/A'} | "
-                f"Category: {main_cat or 'N/A'} | "
-                f"SubCategory1: {sub_cat1 or 'N/A'} | "
-                f"SubCategory2: {sub_cat2 or 'N/A'} | "
-                f"Region: {region or 'N/A'} | "
-                f"Country: {country or 'N/A'} | "
-                f"Created At: {dbtimestamp} | "
-                f"Score: {round(score, 3)}"
-            )
-            results.append({"response": response})
-
-        return results
+        if rows:
+            results = []
+            for row in rows:
+                full_name, email, org, designation, event = row
+                email_part = f"Email: {email}" if email else "Email not available."
+                response = (
+                    f"{full_name} ({designation}) from {org} attended {event}. {email_part}"
+                )
+                results.append({"response": response})
+            return results
+        else:
+            return [{"response": "No matching participants found in Zoho CRM."}]
 
     except Exception as e:
-        logging.exception("❌ Zoho leads pg_trgm query failed:")
-        return [{"response": f"Query failed: {e}"}]
+        logging.error(f"❌ Zoho leads query failed: {e}")
+        return [{"response": "Query failed due to an internal error."}]
 
 
 
