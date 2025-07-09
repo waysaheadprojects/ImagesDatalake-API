@@ -396,11 +396,19 @@ def retrieve_documents(input: str) -> str:
     
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+import yt_dlp
+import os, logging
+from tempfile import TemporaryDirectory
+
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Improved: Search YouTube + get transcript + LLM summary.
-    Keeps same response structure: title, video_url, summary.
+    📺 Safe YouTube video tool with yt-dlp fallback:
+    - Search videos
+    - Get transcript using youtube-transcript-api
+    - If blocked, download subtitles with yt-dlp
+    - Always returns title, video_url, summary
     """
     from googleapiclient.discovery import build
 
@@ -422,26 +430,53 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         url = f"https://www.youtube.com/watch?v={video_id}"
 
         transcript_text = None
+
+        # ✅ First try youtube-transcript-api
         try:
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
             transcript_text = " ".join([entry['text'] for entry in transcript_list])
-        except (TranscriptsDisabled, NoTranscriptFound):
-            transcript_text = None
+            logging.info(f"✅ Got transcript via youtube-transcript-api for {video_id}")
+        except (TranscriptsDisabled, NoTranscriptFound, Exception) as e:
+            logging.warning(f"⚠️ youtube-transcript-api failed for {video_id}: {e}")
 
+        # ✅ Fallback to yt-dlp subtitles if no transcript yet
+        if not transcript_text:
+            try:
+                with TemporaryDirectory() as tmpdir:
+                    ydl_opts = {
+                        'writesubtitles': True,
+                        'writeautomaticsub': True,
+                        'skip_download': True,
+                        'subtitleslangs': ['en'],
+                        'outtmpl': os.path.join(tmpdir, '%(id)s'),
+                    }
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        logging.info(f"🔄 Trying yt-dlp to get subtitles for {video_id}")
+                        ydl.download([url])
+                        # Find the .vtt subtitle file
+                        vtt_file = os.path.join(tmpdir, f"{video_id}.en.vtt")
+                        if os.path.exists(vtt_file):
+                            with open(vtt_file, 'r', encoding='utf-8') as f:
+                                transcript_text = f.read()
+                            logging.info(f"✅ Got subtitles via yt-dlp for {video_id}")
+            except Exception as e:
+                logging.warning(f"⚠️ yt-dlp failed for {video_id}: {e}")
+
+        # ✅ Build prompt
         if transcript_text:
             prompt = f"""
-            Here is a YouTube video transcript:
+            Below is the transcript/subtitles of a YouTube video.
 
             ---
             {transcript_text[:5000]}
             ---
 
-            Give a short clear summary of what the speaker says.
+            Write a clear, short summary of what this video covers.
             """
         else:
             prompt = """
-            No transcript found. Based on the title "{title}",
-            write a short guess of what this video is about.
+            No transcript found. Based on the title: "{title}",
+            write a short reasonable guess of what the video is about.
             """
 
         summary = llm.invoke([{"role": "user", "content": prompt}]).content.strip()
