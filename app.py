@@ -144,52 +144,67 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 
 # ----------------- Tool Definitions ----------------
-# ✅ Production-grade tool with pg_trgm similarity & safe SQL
-
+import os
+from urllib.parse import quote_plus
+from langchain_openai import ChatOpenAI
 from langchain_community.utilities import SQLDatabase
 from langchain.agents import create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain_core.tools import tool
 
-# ✅ Build Postgres URI from env
+# -------------------------------
+# ✅ 1️⃣ Safe Postgres URI
+# -------------------------------
+
+# Encode special characters in password safely!
+password = quote_plus(os.getenv("POSTGRES_PASSWORD"))
+
 SQL_DB_URI = (
     f"postgresql+psycopg2://"
-    f"{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-    f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT', '5432')}/"
+    f"{os.getenv('POSTGRES_USER')}:{password}@"
+    f"{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT', '5432')}/"
     f"{os.getenv('POSTGRES_DB')}"
 )
 
-# ✅ Connect SQLDatabase
+# Example:
+# postgresql+psycopg2://imdl_dwh_da_user:ImagesDWH%402025@45.194.46.142:5432/IMDL_DWH_DEV
+
+# -------------------------------
+# ✅ 2️⃣ SQLDatabase + LLM agent
+# -------------------------------
+
+# Connect SQLDatabase
 sql_db = SQLDatabase.from_uri(SQL_DB_URI)
 
-# ✅ LLM for SQL
-sql_llm = ChatOpenAI(model="gpt-4o", temperature=0)
+# LLM (OpenAI or Claude, match your setup)
+sql_llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0)
 
-# ✅ Toolkit
+# Toolkit
 sql_toolkit = SQLDatabaseToolkit(db=sql_db, llm=sql_llm)
 
-# ✅ Dynamic SQL agent
+# SQL Agent
 sql_agent = create_sql_agent(
     llm=sql_llm,
     toolkit=sql_toolkit,
     verbose=True
 )
 
-# -----------------------------
-# ✅ 2️⃣ The TOOL version
-# -----------------------------
+# -------------------------------
+# ✅ 3️⃣ Final @tool
+# -------------------------------
+
 @tool
 def query_zoho_leads(question: str) -> str:
     """
-    🔍 Dynamic NL ➜ SQL ➜ CRM Tool.
+    🧠 Dynamic NL ➜ SQL ➜ CRM Leads Tool.
 
-    Uses LangChain SQLDatabase to auto-generate SELECT queries
-    for `tb_zoho_crm_lead`. LLM sees your schema automatically.
+    Uses LangChain's SQLDatabase agent to generate SQL for `tb_zoho_crm_lead`
+    dynamically from natural language.
 
     Example input:
-      "Show me all leads from India who attended India Fashion Forum 2024."
+        "Show me all leads from India who attended PRC 2024."
 
-    Output: SQL result rows.
+    Returns: rows matching the generated SELECT query.
     """
     return sql_agent.run(question)
 
