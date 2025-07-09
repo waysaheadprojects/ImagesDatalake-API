@@ -957,31 +957,37 @@ async def get_videos(payload: VideoRequest, current_user: dict = Depends(get_cur
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
 
 @app.post("/get_sources")
-async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_current_user)):
+async def get_sources(payload: SourceRequest, current_user: dict = Depends(verify_token)):
     try:
         question = payload.question.strip()
 
         if not vector_store:
             return JSONResponse(status_code=500, content={"status": False, "error": "FAISS vector store not initialized."})
 
-        docs = vector_store.similarity_search(question, k=1)
-        if not docs:
+        # Retrieve with scores
+        docs_and_scores = vector_store.similarity_search_with_relevance_scores(
+            question, k=5  # fetch top 5 candidates
+        )
+
+        # Filter on score threshold
+        threshold = 0.65
+        filtered = [(doc, score) for doc, score in docs_and_scores if score >= threshold]
+
+        if not filtered:
             return {"status": True, "sources": []}
 
         seen = {}
-        for doc in docs:
+        for doc, score in filtered:
             source = doc.metadata.get("file_name", doc.metadata.get("source", "Unknown"))
             page = str(doc.metadata.get("page", "1"))
+            snippet = re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'\1', doc.page_content.strip())
 
-            if source not in seen:
-                seen[source] = {
-                    "source": source,
-                    "page": page,
-                    "snippet": re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'\1', doc.page_content.strip()),
-                    "signed_url": get_s3_url_by_filename(source)
-                }
-            else:
-                seen[source]["snippet"] += "\n\n" + re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'\1', doc.page_content.strip())
+            seen[source] = seen.get(source, {
+                "source": source,
+                "page": page,
+                "snippet": snippet,
+                "signed_url": get_s3_url_by_filename(source)
+            })
 
         return {"status": True, "sources": list(seen.values())}
 
