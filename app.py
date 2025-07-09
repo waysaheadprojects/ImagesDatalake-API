@@ -172,7 +172,7 @@ class QueryZohoSQLArgs(BaseModel):
 
 # ✅ Final Text-to-SQL execution tool
 @tool("query_zoho_leads_sql", args_schema=QueryZohoSQLArgs, return_direct=True)
-def query_zoho_leads_sql(sql: str, limit: int = 10) -> str:
+def query_zoho_leads(sql: str, limit: int = 10) -> str:
     """
     Executes a safe LLM-generated SELECT query on tb_zoho_crm_lead.
     ✅ Only allows SELECT.
