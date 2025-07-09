@@ -396,14 +396,11 @@ def retrieve_documents(input: str) -> str:
     
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
-
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Searches videos on India Retailing channel.
-    Always includes a transcript-based summary if possible.
-    Keeps same structure: title, video_url, summary.
+    📺 Improved: Search YouTube + get transcript + LLM summary.
+    Keeps same response structure: title, video_url, summary.
     """
     from googleapiclient.discovery import build
 
@@ -424,7 +421,6 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         title = item["snippet"]["title"]
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        # Try to fetch transcript
         transcript_text = None
         try:
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
@@ -432,23 +428,23 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         except (TranscriptsDisabled, NoTranscriptFound):
             transcript_text = None
 
-        # Build prompt for LLM
         if transcript_text:
             prompt = f"""
-            This is a transcript for a YouTube video:
+            Here is a YouTube video transcript:
 
             ---
             {transcript_text[:5000]}
             ---
 
-            Write a short clear summary of what the speaker talks about.
+            Give a short clear summary of what the speaker says.
             """
         else:
             prompt = """
-            No transcript found. Guess a short likely summary based only on the title: "{title}".
+            No transcript found. Based on the title "{title}",
+            write a short guess of what this video is about.
             """
 
-        summary = llm.invoke([{"role": "user", "content": prompt}]).strip()
+        summary = llm.invoke([{"role": "user", "content": prompt}]).content.strip()
 
         videos.append({
             "title": title,
