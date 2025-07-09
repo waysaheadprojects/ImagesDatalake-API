@@ -394,20 +394,25 @@ def retrieve_documents(input: str) -> str:
     )
     return qa.run(input)
     
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 import yt_dlp
 import whisper
-import os, logging
+import os
+import logging
 from tempfile import TemporaryDirectory
+from typing import List
+from langchain_core.tools import tool
+
+# ✅ Load Whisper ONCE outside the tool
+whisper_model = whisper.load_model("base")  # Or 'small', 'medium', 'large' as needed
 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 FULL fallback YouTube tool:
-    1️⃣ Try youtube-transcript-api
-    2️⃣ Fallback to yt-dlp subtitles
-    3️⃣ Fallback to yt-dlp + Whisper local ASR
-    Always return title, video_url, summary.
+    📺 Whisper-only YouTube tool.
+    - Searches YouTube for videos about `input`
+    - Downloads audio using yt-dlp
+    - Transcribes with Whisper
+    - Returns: List[{title, video_url, summary}]
     """
     from googleapiclient.discovery import build
 
@@ -417,14 +422,14 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 
     yt = build("youtube", "v3", developerKey=api_key)
     results = yt.search().list(
-        q=input, type="video", part="snippet", maxResults=2,
-        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # your channel ID
+        q=input,
+        type="video",
+        part="snippet",
+        maxResults=2,
+        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # Or remove to search all channels
     ).execute()
 
     videos = []
-
-    # Load Whisper once
-    whisper_model = whisper.load_model("base")
 
     for item in results.get("items", []):
         video_id = item["id"]["videoId"]
@@ -433,77 +438,34 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 
         transcript_text = None
 
-        # 1️⃣ Try youtube-transcript-api
         try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-            transcript_text = " ".join([entry['text'] for entry in transcript_list])
-            logging.info(f"✅ Got transcript via youtube-transcript-api for {video_id}")
-        except (TranscriptsDisabled, NoTranscriptFound, Exception) as e:
-            logging.warning(f"⚠️ youtube-transcript-api failed for {video_id}: {e}")
+            with TemporaryDirectory() as tmpdir:
+                audio_path = os.path.join(tmpdir, f"{video_id}.mp3")
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'outtmpl': audio_path,
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                    }],
+                }
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    logging.info(f"🔊 Downloading audio for {video_id}")
+                    ydl.download([url])
 
-        # 2️⃣ Fallback: yt-dlp subtitles
-        if not transcript_text:
-            try:
-                with TemporaryDirectory() as tmpdir:
-                    ydl_opts = {
-                        'writesubtitles': True,
-                        'writeautomaticsub': True,
-                        'skip_download': True,
-                        'subtitleslangs': ['en'],
-                        'outtmpl': os.path.join(tmpdir, '%(id)s'),
-                    }
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        logging.info(f"🔄 Trying yt-dlp subtitles for {video_id}")
-                        ydl.download([url])
-                        vtt_file = os.path.join(tmpdir, f"{video_id}.en.vtt")
-                        if os.path.exists(vtt_file):
-                            with open(vtt_file, 'r', encoding='utf-8') as f:
-                                transcript_text = f.read()
-                            logging.info(f"✅ Got subtitles via yt-dlp for {video_id}")
-            except Exception as e:
-                logging.warning(f"⚠️ yt-dlp subtitles failed for {video_id}: {e}")
+                result = whisper_model.transcribe(audio_path)
+                transcript_text = result["text"]
+                logging.info(f"✅ Whisper transcribed {video_id}")
 
-        # 3️⃣ Fallback: yt-dlp audio + Whisper ASR
-        if not transcript_text:
-            try:
-                with TemporaryDirectory() as tmpdir:
-                    audio_path = os.path.join(tmpdir, f"{video_id}.mp3")
-                    ydl_opts = {
-                        'format': 'bestaudio/best',
-                        'outtmpl': audio_path,
-                        'postprocessors': [{
-                            'key': 'FFmpegExtractAudio',
-                            'preferredcodec': 'mp3',
-                        }],
-                    }
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        logging.info(f"🔊 Downloading audio for Whisper for {video_id}")
-                        ydl.download([url])
+        except Exception as e:
+            logging.warning(f"⚠️ Whisper failed for {video_id}: {e}")
+            transcript_text = None
 
-                    result = whisper_model.transcribe(audio_path)
-                    transcript_text = result["text"]
-                    logging.info(f"✅ Transcribed via Whisper for {video_id}")
-            except Exception as e:
-                logging.warning(f"⚠️ Whisper fallback failed for {video_id}: {e}")
-
-        # ✅ Final fallback summary
         if transcript_text:
-            prompt = f"""
-            Below is a YouTube video transcript/subtitles/audio ASR:
-
-            ---
-            {transcript_text[:5000]}
-            ---
-
-            Write a clear short factual summary of what the speaker says.
-            """
+            # You can replace with LLM call:
+            summary = " ".join(transcript_text.split()[:50]) + "..."
         else:
-            prompt = """
-            No transcript found. Based on title: "{title}",
-            write a short reasonable guess of what the video is about.
-            """
-
-        summary = llm.invoke([{"role": "user", "content": prompt}]).content.strip()
+            summary = f"No transcript available. Based on title: {title}"
 
         videos.append({
             "title": title,
@@ -512,7 +474,6 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         })
 
     return videos
-
         
 @tool
 def detect_people_and_images(input: str) -> list:
