@@ -595,106 +595,94 @@ def get_attendee_images(event_name: str) -> List[dict]:
 
 
 # ----------------- LangGraph Agent Setup -----------------
-from langchain_community.llms import Ollama
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
-from typing_extensions import TypedDict, Annotated
+from typing_extensions import TypedDict
+from typing import Annotated
 from langgraph.graph.message import add_messages
-from langgraph.graph import StateGraph, START
-from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver  # ✅ ✅ ✅
+from langgraph.checkpoint.memory import MemorySaver
 
-# ✅ 2️⃣ Ollama LLM + alias
-llm = Ollama(
-    model="llama3.2",
-    base_url="http://localhost:11434",
-    temperature=0
-)
+# Define your tools
+tools = [query_zoho_leads, retrieve_documents, fetch_youtube_videos, get_attendee_images]
 
-llm_with_tools = llm 
+# Bind tools to the LLM (no system_prompt here)
+llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0.5)
+llm_with_tools = llm.bind_tools(tools, tool_choice="auto")  # Correct usage
 
-# ✅ 4️⃣ Define the tools list
-tools = [
-    query_zoho_leads,
-    retrieve_documents,
-    fetch_youtube_videos,
-    get_attendee_images
-]
-
-
-# ✅ LangGraph
+# Shared state type
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 def chatbot(state: State):
-    # ⏹️ If last message is TOOL_NO_RESULT, stop & return that
-    last_msg = state["messages"][-1].content  # ✅ Fix: dot access
-    if "<TOOL_NO_RESULT>" in last_msg:
-        clean = last_msg.split("<TOOL_NO_RESULT>", 1)[1]
-        logging.info("✅ Tool fallback detected — blocking extra LLM output.")
-        return {"messages": [{"role": "assistant", "content": clean}]}
-
-    # ✅ Otherwise add system instruction once
     if len(state["messages"]) == 1:
         system_instruction = {
-    "role": "system",
-    "content": (
-        "✅ You are **Retailopedia AI** — a polite, reliable retail & events assistant.\n\n"
+            "role": "system",
+            "content": (
+                "✅ **You are Retailopedia AI** — a warm, smart, polite AI assistant for retail & events.\n\n"
 
-        "🧩 **TOOLS AVAILABLE:**\n"
-        "1️⃣ `query_zoho_leads`: Search participant details from the Zoho CRM table `tb_zoho_crm_lead`.\n"
-        "   - Return **only a valid raw SQL SELECT** query. Never add explanations.\n"
-        "   - If you have no data to generate valid SQL, respond with a polite HTML **inside a `<div>`**, wrapped with `<TOOL_NO_RESULT>` to signal fallback block.\n"
-        "   - Example: `<TOOL_NO_RESULT><div><p>Sorry, could you share the full name or company to search for?</p></div>`\n\n"
+                "👉 **You have 4 tools:**\n"
+                "1️⃣ `query_zoho_leads` → For any question about people, CEOs, founders, speakers, exhibitors, companies, participant profiles in the CRM.\n"
+                "  - Always respond ONLY with a raw valid SQL SELECT for `tb_zoho_crm_lead`.\n"
+                "  - NEVER guess or output fallback text.\n"
+                "  - If you don't have enough info, ask the user politely **inside a `<div><p>`**, but DO NOT generate a fallback text like \"I will try broader search\".\n\n"
 
-        "2️⃣ `retrieve_documents`: Retrieve factual magazine articles, quotes, interviews, or summaries.\n"
-        "   - Always format answer as **HTML** using `<div>`, `<h3>`, `<ul>`, `<li>` — no Markdown.\n"
-        "   - Do **not** return raw SQL for documents.\n\n"
+                "📌 **`tb_zoho_crm_lead` structure:**\n"
+                "- `id`: INT or UUID\n"
+                "- `full_name`: TEXT\n"
+                "- `designation`: TEXT\n"
+                "- `organisation`: TEXT\n"
+                "- `email`: TEXT\n"
+                "- `secondary_email`: TEXT\n"
+                "- `event_name`: TEXT\n"
+                "- `participant_profile`: TEXT\n"
+                "- `vertical`: TEXT\n"
+                "- `main_category`: TEXT\n"
+                "- `sub_category1`: TEXT\n"
+                "- `sub_category2`: TEXT\n"
+                "- `region`: TEXT\n"
+                "- `country`: TEXT\n"
+                "- `dbtimestamp`: TIMESTAMP\n\n"
 
-        "3️⃣ `fetch_youtube_videos`: Retrieve YouTube videos related to an event, topic, or company.\n"
-        "   - Always respond with clean HTML links and short video descriptions.\n\n"
+                "✅ **SQL rules:**\n"
+                "- Always use `LOWER()` + `LIKE` for fuzzy match.\n"
+                "- Always use `LIMIT 10`.\n"
+                "- Example: `SELECT full_name, designation, organisation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;`\n"
+                "- Do not add text around the SQL for this tool — return only raw SQL.\n"
+                "- Never mention \"Name\" — use `full_name`.\n\n"
 
-        "4️⃣ `get_attendee_images`: Return images of people linked to an event from your image DB.\n"
-        "   - Always respond with HTML.\n\n"
+                "2️⃣ `retrieve_documents` → For magazine articles, quotes, insights.\n"
+                "   - Example: \"What did Kishore Biyani say about D2C brands?\"\n\n"
 
-        "🔐 **FALLBACK POLICY:**\n"
-        "- If a tool response includes `<TOOL_NO_RESULT>`, **never add any additional guesses or fallback text**.\n"
-        "- Just return the fallback HTML exactly as given — no extra commentary.\n"
-        "- If you have insufficient details for `query_zoho_leads`, ask the user politely for clarification using `<TOOL_NO_RESULT>` markup.\n\n"
+                "3️⃣ `fetch_youtube_videos` → For event or company YouTube videos.\n"
+                "   - Example: \"Show me videos from India Fashion Forum.\"\n\n"
 
-        "🧑‍💻 **RULES FOR `query_zoho_leads`:**\n"
-        "- Use only `SELECT`.\n"
-        "- Always fuzzy match text: use `LOWER()` + `LIKE` or `ILIKE`.\n"
-        "- Never run `INSERT`, `UPDATE`, `DELETE`, `DROP`, or DDL.\n"
-        "- Use `LIMIT 10`.\n"
-        "- Example: `SELECT full_name, designation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;`\n"
-        "- Do not explain SQL. Do not wrap SQL in Markdown — return raw SQL only.\n\n"
+                "4️⃣ `detect_people_and_images` → For finding photos of people or brands locally.\n"
+                "   - Example: \"Get images of Kishore Biyani.\"\n\n"
 
-        "🌐 **FORMATTING:**\n"
-        "- All non-SQL tool outputs must be in **clean HTML** (`<div>`, `<p>`, `<h3>`, `<ul>`).\n"
-        "- Never produce Markdown or plain text.\n"
-        "- Do not mix formats.\n\n"
+                "✅ **If unsure:**\n"
+                "- If you do not know enough to build the SQL, politely ask the user to clarify **inside `<div><p>`**.\n"
+                "- Example: `<div><p>Could you please share the full name or company to search?</p></div>`\n"
+                "- Do NOT invent fallback text like \"I will try again with broader search.\"\n\n"
 
-        "🤖 **TONE:**\n"
-        "- Keep replies warm, short, polite, human-like.\n"
-        "- If no match is found, guide the user politely on how to refine their query.\n"
-        "- Example fallback: `<TOOL_NO_RESULT><div><p>Sorry, I couldn’t find that person. Could you please share more details?</p></div>`\n\n"
+                "✅ **Formatting:**\n"
+                "- For `query_zoho_leads`: only the raw SQL, nothing else.\n"
+                "- For other answers: always wrap in `<div>`, `<p>`, `<h3>`, `<ul>` if needed.\n"
+                "- Never output Markdown.\n"
+                "- Never output SQL for other tools.\n\n"
 
-        "✅ **SAFETY:**\n"
-        "- If unsure, do not guess. Always ask for clarification using `<TOOL_NO_RESULT>` and polite HTML.\n"
-        "- Do not hallucinate extra people, quotes, or data if not found.\n"
-        "- Return only exactly what the tool generates when using fallback.\n\n"
-
-        "🎯 **SUMMARY:**\n"
-        "- `query_zoho_leads`: strict raw SQL only or polite fallback in `<TOOL_NO_RESULT>` HTML.\n"
-        "- `retrieve_documents`, `fetch_youtube_videos`, `get_attendee_images`: always HTML, never SQL.\n"
-        "- No fallback guessing, no Markdown. All output must be safe, correct, polite, and professional."
-    )
-}
+                "✅ **Your tone:**\n"
+                "- Polite, short, warm.\n"
+                "- Use simple clear HTML.\n"
+                "- If no result: politely guide the user to try another query, inside HTML."
+            )
+        }
         state["messages"].insert(0, system_instruction)
     return {"messages": [llm_with_tools.invoke(state["messages"])]}
 
+
+
+# Build the LangGraph
 graph_builder = StateGraph(State)
 graph_builder.add_node("chatbot", chatbot)
 graph_builder.add_node("tools", ToolNode(tools=tools))
@@ -702,6 +690,7 @@ graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 graph_builder.add_edge(START, "chatbot")
 
+# Enable checkpointing
 memory = MemorySaver()
 graph = graph_builder.compile(checkpointer=memory)
 
@@ -1293,52 +1282,32 @@ async def get_image_full(image_key: str = Query(...)):
 
 
 # ----------------- Router (for initial tool type classification) -----------------
-from langchain_core.runnables import RunnableLambda
-from langgraph.prebuilt import tools_condition
 
-def route_tool(state: dict) -> dict:
-    question = state["messages"][-1].content
+def route_tool(state):
+    question = state["input"]
+    system_prompt = """
+    Decide the best tool to answer this question. Reply ONLY with the tool name.
 
-    router_prompt = """
-    Pick only one tool name.
-
-    Tools:
+    Tools available:
     - query_zoho_leads
     - retrieve_documents
     - fetch_youtube_videos
     - detect_people_and_images
     - get_attendee_images
 
-    When:
-    - Leads, names, event attendees ➜ query_zoho_leads
-    - Quotes, news, opinions ➜ retrieve_documents
-    - Videos ➜ fetch_youtube_videos
-    - Image detection ➜ detect_people_and_images
-    - Get event attendee images ➜ get_attendee_images
+    Guidelines:
+    - For event attendees, emails, participant info → query_zoho_leads
+    - For quotes, mentions, descriptions from magazines/articles → retrieve_documents
+    - For videos (e.g., PRC, IFF, conferences) → fetch_youtube_videos
+    - For people image search (based on answer) → detect_people_and_images
+    - For showing images use -> get_attendee_images
 
-    Output ONLY the tool name, nothing else.
+    ONLY output the tool name.
     """
-
-    response = llm.invoke([
-        {"role": "system", "content": router_prompt},
+    messages = [
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": question}
-    ]).strip()
-
-    return {"next": response}
-
-router = RunnableLambda(route_tool)
-
-tools_condition = lambda state: state["next"]
-
-graph_builder = StateGraph(State)
-graph_builder.add_node("chatbot", chatbot)
-graph_builder.add_node("router", router)
-graph_builder.add_node("tools", ToolNode(tools=tools))
-graph_builder.add_edge(START, "chatbot")
-graph_builder.add_edge("tools", "chatbot")
-graph_builder.add_conditional_edges("chatbot", router)
-graph_builder.add_conditional_edges("router", tools_condition)
-
-memory = MemorySaver()
-graph = graph_builder.compile(checkpointer=memory)
+    ]
+    response = llm.invoke(messages).content.strip()
+    return {"tool": response}
 
