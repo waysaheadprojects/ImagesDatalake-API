@@ -957,27 +957,35 @@ async def get_videos(payload: VideoRequest, current_user: dict = Depends(get_cur
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
 
 @app.post("/get_sources")
-async def get_sources(payload: SourceRequest, current_user: dict = Depends(verify_token)):
+async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_current_user)):
     try:
-        question = payload.question.strip()
+        question = payload.question.strip().lower()
 
         if not vector_store:
             return JSONResponse(status_code=500, content={"status": False, "error": "FAISS vector store not initialized."})
 
-        # Retrieve with scores
+        # 1️⃣ Search with scores
         docs_and_scores = vector_store.similarity_search_with_relevance_scores(
-            question, k=5  # fetch top 5 candidates
+            question, k=5  # fetch a few to check
         )
 
-        # Filter on score threshold
-        threshold = 0.65
-        filtered = [(doc, score) for doc, score in docs_and_scores if score >= threshold]
+        # 2️⃣ Stricter similarity filter
+        threshold = 0.80  # 👈 stricter: 80%+ cosine similarity
+        filtered = [
+            (doc, score) for doc, score in docs_and_scores if score >= threshold
+        ]
 
-        if not filtered:
+        # 3️⃣ Require literal phrase presence too
+        matches = [
+            (doc, score) for doc, score in filtered
+            if question in doc.page_content.lower()
+        ]
+
+        if not matches:
             return {"status": True, "sources": []}
 
         seen = {}
-        for doc, score in filtered:
+        for doc, score in matches:
             source = doc.metadata.get("file_name", doc.metadata.get("source", "Unknown"))
             page = str(doc.metadata.get("page", "1"))
             snippet = re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'\1', doc.page_content.strip())
@@ -994,6 +1002,7 @@ async def get_sources(payload: SourceRequest, current_user: dict = Depends(verif
     except Exception as e:
         logging.error(f"/get_sources failed: {e}")
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
 
 
 @app.post("/get_insights")
