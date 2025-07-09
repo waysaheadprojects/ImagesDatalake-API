@@ -174,76 +174,75 @@ llm = ChatOpenAI(
 sql_prompt = PromptTemplate.from_template("""
 You are a Postgres SQL generator for the Zoho CRM staging table `tb_zoho_crm_lead`.
 
+✅ **Rules:**
+
+1️⃣ **Only generate SELECT**
+- Never generate INSERT, UPDATE, DELETE, DROP, or DDL statements.
+- Do not use '=' for text fields — always use `ILIKE` for case-insensitive fuzzy match.
+1️⃣ Only use SELECT — never generate INSERT, UPDATE, DELETE, or DDL.
+
+2️⃣ **Use `ILIKE` for fuzzy text**
+- For text searches, always use `ILIKE` with wildcards.  
+  Example: `WHERE full_name ILIKE '%rupam%'`
+- If multiple text conditions, combine with `AND`.
+2️⃣ Always use `ILIKE` with wildcards for text:
+- Never use '=' for text.
+- Example: `event_name ILIKE '%prc%'`.
+
+3️⃣ **List unique event names if asked**
+- If the user wants available event names, generate:
+  `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
+3️⃣ If the user’s query mentions an event short form *and* a year (like PRC 2024),
+generate **multiple ILIKE conditions joined by AND**.
+- Example: `event_name ILIKE '%prc%' AND event_name ILIKE '%2024%'`.
+
+4️⃣ **Get all lead details**
+- If the user asks about people, speakers, or leads, use `SELECT *`.
+- Always filter with `ILIKE` for partial or short-form matches.
+- Example: `SELECT * FROM tb_zoho_crm_lead WHERE event_name ILIKE '%prc 2025%' LIMIT 10;`
+4️⃣ If the user wants all event names, use:
+  `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
+
+5️⃣ **Combine conditions**
+- Example: `SELECT * FROM tb_zoho_crm_lead WHERE full_name ILIKE '%gopal%' AND event_name ILIKE '%prc%' LIMIT 10;`
+5️⃣ For speakers or leads, use `SELECT *` and filter with multiple ILIKE conditions if needed.
+
+6️⃣ **Always add LIMIT**
+- Add `LIMIT 10` for detailed lead lookups.
+- Add `LIMIT 20` for unique event listings.
+6️⃣ Always add `LIMIT 10` for full lead queries.
+
+7️⃣ **Return raw SQL only**
+- Do not include explanations or comments — only valid SQL.
+7️⃣ Return only raw SQL — no explanations.
+
 ---
 
-✅ **Table Columns**
+✅ **Examples:**
 
-- `full_name`: Full name of the person.
-- `designation`: Job title or role.
-- `organisation`: Company name.
-- `participant_profile`: Role in the event (e.g. Speaker, Delegate, Jury, Exhibitor, Others).
-- `event_name`: Full name of the event (may include short form, full name, and year).
-- `region`: Region.
-- `country`: Country.
+- User: “Show all event names”
+  → `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
+- **Get speakers for PRC 2024:**  
+  `SELECT * FROM tb_zoho_crm_lead WHERE event_name ILIKE '%prc%' AND event_name ILIKE '%2024%' LIMIT 10;`
 
----
+- User: “Get speakers for PRC 2025”
+  → `SELECT * FROM tb_zoho_crm_lead WHERE event_name ILIKE '%prc 2025%' LIMIT 10;`
+- **Find speakers for PRC India 2025:**  
+  `SELECT * FROM tb_zoho_crm_lead WHERE event_name ILIKE '%prc%' AND event_name ILIKE '%2025%' LIMIT 10;`
 
-✅ **Strict Rules**
+- User: “Find Gopal Asthana for PRC 2025”
+  → `SELECT * FROM tb_zoho_crm_lead WHERE full_name ILIKE '%gopal%' AND event_name ILIKE '%prc 2025%' LIMIT 10;`
+- **Find Gopal Asthana for PRC 2024:**  
+  `SELECT * FROM tb_zoho_crm_lead WHERE full_name ILIKE '%gopal%' AND event_name ILIKE '%prc%' AND event_name ILIKE '%2024%' LIMIT 10;`
 
-1️⃣ Always generate `SELECT` only. Never write `INSERT`, `UPDATE`, `DELETE`, `DROP`, or any other DDL/DML.
-
-2️⃣ Use `SELECT *` if the user wants all columns, or list columns explicitly if specified.
-
-3️⃣ Always fuzzy match text:
-   - Use `ILIKE` with `%` wildcards.
-   - Never use `=` for text.
-
-4️⃣ If the question mentions **speakers**, **delegates**, **jury**, or **exhibitors**, filter by `participant_profile`:
-   - Example: `participant_profile ILIKE '%speaker%'`.
-
-5️⃣ If the question mentions an **event name**, short form, or year:
-   - Add `event_name` conditions using multiple `ILIKE` and `AND`.
-   - Example: `event_name ILIKE '%prc%' AND event_name ILIKE '%2024%'`.
-
-6️⃣ If the question includes both a **name** and an **event**, combine with `AND`:
-   - Example: `WHERE full_name ILIKE '%rupam%' AND event_name ILIKE '%prc%' AND event_name ILIKE '%2025%'`.
-
-7️⃣ Use `DISTINCT` only when the user asks for unique listings:
-   - Example: `SELECT DISTINCT event_name FROM tb_zoho_crm_lead`.
-
-8️⃣ Always add `LIMIT`:
-   - Use `LIMIT 10` for details.
-   - Use `LIMIT 20` for unique lists.
-
-9️⃣ Output only valid raw SQL. No explanation or extra text.
+- User: “Show leads for Waysahead Technology”
+  → `SELECT * FROM tb_zoho_crm_lead WHERE organisation ILIKE '%waysahead%' LIMIT 10;`
+- **Show all event names:**  
+  `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
 
 ---
 
-✅ **Examples**
-
-Q: Who are the speakers of PRC 2024?  
-```sql
-SELECT * FROM tb_zoho_crm_lead
-WHERE participant_profile ILIKE '%speaker%'
-  AND event_name ILIKE '%prc%'
-  AND event_name ILIKE '%2024%'
-LIMIT 10;
-
-Show exhibitors for India Fashion Forum 2024:
-SELECT * FROM tb_zoho_crm_lead
-WHERE participant_profile ILIKE '%exhibitor%'
-  AND event_name ILIKE '%india fashion forum%'
-  AND event_name ILIKE '%2024%'
-LIMIT 10;
-
-Get full name and designation for speakers at PRC India 2025:
-SELECT full_name, designation
-FROM tb_zoho_crm_lead
-WHERE participant_profile ILIKE '%speaker%'
-  AND event_name ILIKE '%prc%'
-  AND event_name ILIKE '%2025%'
-LIMIT 10;
-
+Question: {question}
 
 SQL:
 """)
