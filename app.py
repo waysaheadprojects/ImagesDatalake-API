@@ -403,6 +403,7 @@ from typing import List
 from langchain_core.tools import tool
 import subprocess
 # ✅ Patch PATH so Whisper finds ffmpeg
+# ✅ Patch PATH so Whisper finds ffmpeg
 if "/usr/bin" not in os.environ["PATH"]:
     os.environ["PATH"] += ":/usr/bin"
 print("✅ Runtime PATH:", os.environ["PATH"])
@@ -414,9 +415,9 @@ whisper_model = whisper.load_model("base")  # or 'small', 'medium', 'large' for 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Whisper-only tool.
+    📺 Whisper-only tool with WAV fix.
     - Searches YOUR channel for videos about `input`
-    - Downloads audio with yt-dlp
+    - Downloads audio as WAV with yt-dlp
     - Transcribes with Whisper
     - Returns: [{title, video_url, summary}]
     """
@@ -446,24 +447,26 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 
         try:
             with TemporaryDirectory() as tmpdir:
-                audio_path = os.path.join(tmpdir, f"{video_id}.mp3")
+                # ✅ Force WAV output to guarantee clean decode
+                audio_path = os.path.join(tmpdir, f"{video_id}.wav")
 
                 ffmpeg_path = "/usr/bin"  # confirm with which ffmpeg
 
                 ydl_opts = {
                     'format': 'bestaudio/best',
-                    'outtmpl': audio_path,
+                    'outtmpl': audio_path,      # 👈 final output is .wav
                     'ffmpeg_location': ffmpeg_path,
                     'postprocessors': [{
                         'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'mp3',
+                        'preferredcodec': 'wav',  # 👈 match extension!
                     }],
                 }
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    logging.info(f"🔊 Downloading audio for {video_id} with explicit ffmpeg path")
+                    logging.info(f"🔊 Downloading audio for {video_id} as WAV with explicit ffmpeg")
                     ydl.download([url])
 
+                # ✅ Whisper handles raw WAV flawlessly
                 result = whisper_model.transcribe(audio_path)
                 transcript_text = result["text"]
                 logging.info(f"✅ Whisper transcribed {video_id}")
