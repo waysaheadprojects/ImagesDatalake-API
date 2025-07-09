@@ -173,6 +173,15 @@ llm = ChatOpenAI(
 # ---------------------------------------------------------------------
 sql_prompt = PromptTemplate.from_template("""
 You are a Postgres SQL generator for the Zoho CRM staging table `tb_zoho_crm_lead`.
+Table attributes:
+
+- `full_name`: Full name of the person.
+- `designation`: Job title or role.
+- `organisation`: Company name.
+- `participant_profile`: Role in the event (e.g. Speaker, Delegate, Jury, Exhibitor, Others).
+- `event_name`: Full name of the event (may include short form, full name, and year).
+- `region`: Region.
+- `country`: Country.
 
 ✅ **Rules:**
 
