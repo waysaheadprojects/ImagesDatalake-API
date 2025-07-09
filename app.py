@@ -606,14 +606,41 @@ from langgraph.checkpoint.memory import MemorySaver
 # Define your tools
 tools = [query_zoho_leads, retrieve_documents, fetch_youtube_videos, get_attendee_images]
 
-# Bind tools to the LLM (no system_prompt here)
+# 2️⃣ Initialize Ollama — NO bind_tools
 llm = Ollama(
     model="llama3.2",
     base_url="http://localhost:11434",
     temperature=0
 )
-llm_with_tools = llm.bind_tools(tools, tool_choice="auto")  # Correct usage
 
+# 3️⃣ For LangGraph you don’t “bind” tools to the LLM.
+# Instead, you use the LLM to interpret user intent.
+# Then your graph decides which tool to call.
+
+# 4️⃣ Example: your chatbot node uses Ollama
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+from typing_extensions import TypedDict, Annotated
+from langgraph.graph.message import add_messages
+
+# Define shared state type
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+
+# LangGraph node that runs Ollama
+def chatbot(state: State):
+    return {"messages": [llm.invoke(state["messages"])]}
+
+# Build your graph
+graph_builder = StateGraph(State)
+
+graph_builder.add_node("chatbot", chatbot)
+graph_builder.add_node("tools", ToolNode(tools=tools))
+graph_builder.add_conditional_edges("chatbot", tools_condition)
+graph_builder.add_edge("tools", "chatbot")
+graph_builder.add_edge(START, "chatbot")
+
+graph = graph_builder.compile()
 # Shared state type
 class State(TypedDict):
     messages: Annotated[list, add_messages]
