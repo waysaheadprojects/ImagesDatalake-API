@@ -479,6 +479,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 
         if transcript_text:
             summary = " ".join(transcript_text.split()[:50]) + "..."
+            
         else:
             summary = f"No transcript. Based on title: {title}"
 
@@ -963,7 +964,7 @@ async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_c
         if not vector_store:
             return JSONResponse(status_code=500, content={"status": False, "error": "FAISS vector store not initialized."})
 
-        docs = vector_store.similarity_search(question, k=10)
+        docs = vector_store.similarity_search(question, k=1)
         if not docs:
             return {"status": True, "sources": []}
 
