@@ -146,100 +146,53 @@ def get_s3_url_by_filename(file_name: str) -> str:
 # ----------------- Tool Definitions ----------------
 # ✅ Production-grade tool with pg_trgm similarity & safe SQL
 
+from langchain_community.utilities import SQLDatabase
+from langchain.agents import create_sql_agent
+from langchain.agents.agent_toolkits import SQLDatabaseToolkit
+from langchain_core.tools import tool
+
+# ✅ Build Postgres URI from env
+SQL_DB_URI = (
+    f"postgresql+psycopg2://"
+    f"{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+    f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT', '5432')}/"
+    f"{os.getenv('POSTGRES_DB')}"
+)
+
+# ✅ Connect SQLDatabase
+sql_db = SQLDatabase.from_uri(SQL_DB_URI)
+
+# ✅ LLM for SQL
+sql_llm = ChatOpenAI(model="gpt-4o", temperature=0)
+
+# ✅ Toolkit
+sql_toolkit = SQLDatabaseToolkit(db=sql_db, llm=sql_llm)
+
+# ✅ Dynamic SQL agent
+sql_agent = create_sql_agent(
+    llm=sql_llm,
+    toolkit=sql_toolkit,
+    verbose=True
+)
+
+# -----------------------------
+# ✅ 2️⃣ The TOOL version
+# -----------------------------
 @tool
-def query_zoho_leads(input_text: str) -> List[dict]:
+def query_zoho_leads(question: str) -> str:
     """
-    🔍 Safe fuzzy match for Zoho CRM leads.
-    ✅ Checks all fields:
-        id, full_name, email, secondary_email,
-        organisation, designation, event_name,
-        participant_profile, vertical, main_category,
-        sub_category1, sub_category2, region, country, dbtimestamp.
-    ✅ Returns up to 10 formatted results.
+    🔍 Dynamic NL ➜ SQL ➜ CRM Tool.
+
+    Uses LangChain SQLDatabase to auto-generate SELECT queries
+    for `tb_zoho_crm_lead`. LLM sees your schema automatically.
+
+    Example input:
+      "Show me all leads from India who attended India Fashion Forum 2024."
+
+    Output: SQL result rows.
     """
-    # ✅ Split input safely
-    keywords = [
-        re.sub(r"[^\w\s]", "", k.strip().lower())
-        for k in input_text.split()
-        if len(k.strip()) > 1
-    ]
+    return sql_agent.run(question)
 
-    if not keywords:
-        return [{"response": "Please provide more details for the search."}]
-
-    fields = [
-        "id", "full_name", "email", "secondary_email",
-        "organisation", "designation", "event_name",
-        "participant_profile", "vertical", "main_category",
-        "sub_category1", "sub_category2", "region", "country"
-    ]
-
-    where_clauses = []
-    params = []
-    for k in keywords:
-        for f in fields:
-            where_clauses.append(f"LOWER({f}) LIKE %s")
-            params.append(f"%{k}%")
-
-    where_sql = " OR ".join(where_clauses)
-
-    sql = f"""
-        SELECT
-            id, full_name, email, secondary_email,
-            organisation, designation, event_name,
-            participant_profile, vertical, main_category,
-            sub_category1, sub_category2, region, country, dbtimestamp
-        FROM tb_zoho_crm_lead
-        WHERE {where_sql}
-        LIMIT 10;
-    """
-
-    logging.info(f"📌 Running SQL: {sql} | Params: {params}")
-
-    try:
-        conn = connect(
-            host=os.getenv("POSTGRES_HOST"),
-            port=int(os.getenv("POSTGRES_PORT", "5432")),
-            dbname=os.getenv("POSTGRES_STG_DB"),
-            user=os.getenv("POSTGRES_STG_USER"),
-            password=os.getenv("POSTGRES_STG_PASSWORD")
-        )
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        if not rows:
-            return [{"response": "✅ No matching participants found."}]
-
-        results = []
-        for row in rows:
-            parts = [
-                f"ID: {row['id']}",
-                f"Name: {row['full_name']}",
-                f"Designation: {row['designation']}",
-                f"Org: {row['organisation']}",
-                f"Event: {row['event_name']}",
-                f"Profile: {row['participant_profile']}",
-                f"Vertical: {row['vertical']}",
-                f"Category: {row['main_category']}",
-                f"SubCat1: {row['sub_category1']}",
-                f"SubCat2: {row['sub_category2']}",
-                f"Region: {row['region']}",
-                f"Country: {row['country']}",
-                f"Email: {row['email'] or 'N/A'}",
-                f"Secondary Email: {row['secondary_email'] or 'N/A'}",
-                f"Timestamp: {row['dbtimestamp']}"
-            ]
-            response = " | ".join(parts)
-            results.append({"response": response})
-
-        return results
-
-    except Exception as e:
-        logging.error(f"❌ Zoho leads query failed: {e}")
-        return [{"response": "❌ Query failed due to an internal error."}]
 
 @tool
 def retrieve_documents(input: str) -> str:
