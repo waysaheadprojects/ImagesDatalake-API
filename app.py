@@ -151,7 +151,7 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain_core.tools import tool
-
+from langchain_community.llms import Ollama
 # ---------------------------------------------------------------------
 # ✅ 0️⃣ Setup basic logging
 # ---------------------------------------------------------------------
@@ -163,8 +163,9 @@ logging.basicConfig(
 # ---------------------------------------------------------------------
 # ✅ 1️⃣ Initialize LLM
 # ---------------------------------------------------------------------
-llm = ChatOpenAI(
-    model="gpt-4.1-nano",
+llm = Ollama(
+    model="llama3.2",
+    base_url="http://localhost:11434",
     temperature=0
 )
 
