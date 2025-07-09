@@ -622,97 +622,38 @@ tools = [
     get_attendee_images
 ]
 
-# ✅ 5️⃣ Shared state type for LangGraph
-class State(TypedDict):
-    messages: Annotated[list, add_messages]
 
-# ✅ 6️⃣ LLM chatbot node
-def chatbot(state: State):
-    return {"messages": [llm_with_tools.invoke(state["messages"])]}
-
-# ✅ 7️⃣ Build your graph
-graph_builder = StateGraph(State)
-graph_builder.add_node("chatbot", chatbot)
-graph_builder.add_node("tools", ToolNode(tools=tools))  # ✅ uses 'tools' that exists
-graph_builder.add_conditional_edges("chatbot", tools_condition)
-graph_builder.add_edge("tools", "chatbot")
-graph_builder.add_edge(START, "chatbot")
-
-graph = graph_builder.compile()
-
-# Shared state type
+# ✅ LangGraph
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 def chatbot(state: State):
+    # ⏹️ If last message is TOOL_NO_RESULT, stop & return that
+    last_msg = state["messages"][-1]["content"]
+    if last_msg.startswith("<TOOL_NO_RESULT>"):
+        clean = last_msg[len("<TOOL_NO_RESULT>"):]
+        logging.info("🔒 Blocking fallback. Returning tool result only.")
+        return {"messages": [clean]}
+
+    # ✅ Otherwise add system instruction once
     if len(state["messages"]) == 1:
         system_instruction = {
             "role": "system",
             "content": (
-                "✅ **You are Retailopedia AI** — a warm, smart, polite AI assistant for retail & events.\n\n"
-
-                "👉 **You have 4 tools:**\n"
-                "1️⃣ `query_zoho_leads` → For any question about people, CEOs, founders, speakers, exhibitors, companies, participant profiles in the CRM.\n"
-                "  - Always respond ONLY with a raw valid SQL SELECT for `tb_zoho_crm_lead`.\n"
-                "  - NEVER guess or output fallback text.\n"
-                "  - If you don't have enough info, ask the user politely **inside a `<div><p>`**, but DO NOT generate a fallback text like \"I will try broader search\".\n\n"
-
-                "📌 **`tb_zoho_crm_lead` structure:**\n"
-                "- `id`: INT or UUID\n"
-                "- `full_name`: TEXT\n"
-                "- `designation`: TEXT\n"
-                "- `organisation`: TEXT\n"
-                "- `email`: TEXT\n"
-                "- `secondary_email`: TEXT\n"
-                "- `event_name`: TEXT\n"
-                "- `participant_profile`: TEXT\n"
-                "- `vertical`: TEXT\n"
-                "- `main_category`: TEXT\n"
-                "- `sub_category1`: TEXT\n"
-                "- `sub_category2`: TEXT\n"
-                "- `region`: TEXT\n"
-                "- `country`: TEXT\n"
-                "- `dbtimestamp`: TIMESTAMP\n\n"
-
-                "✅ **SQL rules:**\n"
-                "- Always use `LOWER()` + `LIKE` for fuzzy match.\n"
-                "- Always use `LIMIT 10`.\n"
-                "- Example: `SELECT full_name, designation, organisation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;`\n"
-                "- Do not add text around the SQL for this tool — return only raw SQL.\n"
-                "- Never mention \"Name\" — use `full_name`.\n\n"
-
-                "2️⃣ `retrieve_documents` → For magazine articles, quotes, insights.\n"
-                "   - Example: \"What did Kishore Biyani say about D2C brands?\"\n\n"
-
-                "3️⃣ `fetch_youtube_videos` → For event or company YouTube videos.\n"
-                "   - Example: \"Show me videos from India Fashion Forum.\"\n\n"
-
-                "4️⃣ `detect_people_and_images` → For finding photos of people or brands locally.\n"
-                "   - Example: \"Get images of Kishore Biyani.\"\n\n"
-
-                "✅ **If unsure:**\n"
-                "- If you do not know enough to build the SQL, politely ask the user to clarify **inside `<div><p>`**.\n"
-                "- Example: `<div><p>Could you please share the full name or company to search?</p></div>`\n"
-                "- Do NOT invent fallback text like \"I will try again with broader search.\"\n\n"
-
-                "✅ **Formatting:**\n"
-                "- For `query_zoho_leads`: only the raw SQL, nothing else.\n"
-                "- For other answers: always wrap in `<div>`, `<p>`, `<h3>`, `<ul>` if needed.\n"
-                "- Never output Markdown.\n"
-                "- Never output SQL for other tools.\n\n"
-
-                "✅ **Your tone:**\n"
-                "- Polite, short, warm.\n"
-                "- Use simple clear HTML.\n"
-                "- If no result: politely guide the user to try another query, inside HTML."
+                "✅ You are a polite retail AI assistant.\n\n"
+                "👉 You have 4 tools:\n"
+                "1️⃣ `query_zoho_leads` → For people/company info in CRM. Return ONLY raw SQL if used.\n"
+                "2️⃣ `retrieve_documents` → For magazine insights.\n"
+                "3️⃣ `fetch_youtube_videos` → For YouTube videos.\n"
+                "4️⃣ `get_attendee_images` → For event images.\n\n"
+                "⚡ RULE: If any tool output includes <TOOL_NO_RESULT>, DO NOT GUESS. Just show the message.\n"
+                "⚡ Always return HTML only. Never fallback to guessing. Never invent profiles.\n"
+                "✅ Keep replies short & polite."
             )
         }
         state["messages"].insert(0, system_instruction)
     return {"messages": [llm_with_tools.invoke(state["messages"])]}
 
-
-
-# Build the LangGraph
 graph_builder = StateGraph(State)
 graph_builder.add_node("chatbot", chatbot)
 graph_builder.add_node("tools", ToolNode(tools=tools))
@@ -720,7 +661,6 @@ graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 graph_builder.add_edge(START, "chatbot")
 
-# Enable checkpointing
 memory = MemorySaver()
 graph = graph_builder.compile(checkpointer=memory)
 
