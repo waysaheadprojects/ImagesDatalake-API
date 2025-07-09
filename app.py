@@ -152,7 +152,6 @@ from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 
-# ✅ Good explicit: CRM DB connection config
 CRM_DB_CONN = {
     "host": os.getenv("POSTGRES_HOST"),
     "port": int(os.getenv("POSTGRES_PORT", "5432")),
@@ -161,12 +160,10 @@ CRM_DB_CONN = {
     "password": os.getenv("POSTGRES_STG_PASSWORD"),
 }
 
-# ✅ Schema for arguments
 class QueryZohoSQLArgs(BaseModel):
-    sql: str = Field(..., description="Full SELECT SQL for tb_zoho_crm_lead only.")
-    limit: int = Field(default=10, description="Max rows (safe cap)")
+    sql: str = Field(..., description="Raw SELECT SQL for tb_zoho_crm_lead only")
+    limit: int = Field(default=10)
 
-# ✅ Allowed columns for basic safety
 ALLOWED_COLUMNS = {
     "id", "full_name", "designation", "organisation", "email", "secondary_email",
     "event_name", "participant_profile", "vertical", "main_category",
@@ -176,37 +173,33 @@ ALLOWED_COLUMNS = {
 @tool("query_zoho_leads_sql", args_schema=QueryZohoSQLArgs, return_direct=True)
 def query_zoho_leads(sql: str, limit: int = 10) -> str:
     """
-    🗂️ Runs a safe SELECT-only query on tb_zoho_crm_lead.
-    
-    ✅ Rules enforced:
-      - Must start with SELECT.
-      - Only whitelisted columns allowed.
-      - LIMIT forced to max 100 rows.
-      - Uses psycopg2 RealDictCursor for clean output.
+    📌 Runs validated SELECT-only query on tb_zoho_crm_lead.
+    ✅ Rules:
+      - Only SELECT allowed
+      - Valid columns only
+      - LIMIT 100 enforced
     """
     raw_sql = sql.strip().strip(";")
 
     if not raw_sql.lower().startswith("select"):
-        return "❌ Only SELECT statements are allowed."
+        return "<div><p>❌ Only raw SQL SELECT allowed. Please try again with valid SQL.</p></div>"
 
-    # ✅ Validate columns if possible
-    # E.g., SELECT full_name, designation ...
+    lower_sql = raw_sql.lower()
     try:
-        lower_sql = raw_sql.lower()
-        cols_section = lower_sql.split("from")[0].replace("select", "").strip()
-        cols = [c.strip().split()[-1].replace(",", "") for c in cols_section.split(",")]
+        cols_part = lower_sql.split("from")[0].replace("select", "").strip()
+        cols = [c.strip().split()[-1].replace(",", "") for c in cols_part.split(",")]
         if "*" in cols:
-            return "❌ SELECT * is not allowed. Specify columns explicitly."
-
+            return "<div><p>❌ SELECT * is not allowed. List columns explicitly.</p></div>"
         for col in cols:
             if col not in ALLOWED_COLUMNS:
-                return f"❌ Invalid column: `{col}` is not allowed."
+                return f"<div><p>❌ Column `{col}` is invalid. Please use valid CRM columns only.</p></div>"
     except Exception as e:
-        return f"❌ Failed to parse columns: {str(e)}"
+        return f"<div><p>❌ Failed to parse columns: {e}</p></div>"
 
-    # ✅ Add LIMIT if missing
     if "limit" not in lower_sql:
         raw_sql += f" LIMIT {min(limit, 100)}"
+
+    print(f"📌 Running SQL: {raw_sql}")
 
     try:
         conn = connect(**CRM_DB_CONN)
@@ -217,17 +210,15 @@ def query_zoho_leads(sql: str, limit: int = 10) -> str:
         conn.close()
 
         if not rows:
-            return "✅ Query ran, no rows found."
+            return "<div><p>✅ Query ran. No rows found.</p></div>"
 
         output = []
         for idx, row in enumerate(rows, 1):
-            line = [f"{k}: {v}" for k, v in row.items()]
-            output.append(f"{idx}. " + " | ".join(line))
-        return "\n".join(output)
+            output.append(f"{idx}. " + " | ".join([f"{k}: {v}" for k, v in row.items()]))
+        return "<div><p>" + "<br>".join(output) + "</p></div>"
 
     except Exception as e:
-        return f"❌ Query failed: {str(e)}"
-
+        return f"<div><p>❌ Query failed: {e}</p></div>"
 
 @tool
 def retrieve_documents(input: str) -> str:
