@@ -174,7 +174,11 @@ SQL_DB_URI = (
 # -------------------------------
 
 # Connect SQLDatabase
-sql_db = SQLDatabase.from_uri(SQL_DB_URI)
+sql_db = SQLDatabase.from_uri(
+    SQL_DB_URI,
+    include_tables=["tb_zoho_crm_lead"]
+)
+
 
 # LLM (OpenAI or Claude, match your setup)
 sql_llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0)
