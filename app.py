@@ -283,10 +283,12 @@ def detect_people_and_images(input: str) -> list:
     🖼️ Image Finder Tool: PostgreSQL only.
 
     - Uses spaCy NER to extract PERSON/ORG.
-    - Fuzzy match on tags in local DB.
-    - If no full name match, fallback to first name only.
-    - Returns local base64 images.
+    - Fuzzy match on tags.
+    - Fallback to first name if needed.
+    - Groups by tags.
+    - Includes `image_key` for each image.
     """
+
     import os
     import psycopg2
     import logging
@@ -355,8 +357,7 @@ def detect_people_and_images(input: str) -> list:
             continue
         seen.add(norm_name)
 
-        matched_title = "N/A"
-        local_photos = []
+        grouped_by_tag = {}
 
         try:
             conn = psycopg2.connect(**DB_CONFIG)
@@ -364,7 +365,7 @@ def detect_people_and_images(input: str) -> list:
 
             print(f"🔎 Searching FULL NAME: '{norm_name}'")
             cursor.execute("""
-                SELECT title, encode(image_data_low, 'base64') AS base64_image
+                SELECT image_key, title, tags, encode(image_data_low, 'base64') AS base64_image
                 FROM tb_fact_image_uploads
                 WHERE similarity(LOWER(tags), %s) > 0.48
                    OR LOWER(tags) ILIKE %s
@@ -378,7 +379,7 @@ def detect_people_and_images(input: str) -> list:
                 first_name = norm_name.split()[0]
                 print(f"🔄 Fallback to FIRST NAME: '{first_name}'")
                 cursor.execute("""
-                    SELECT title, encode(image_data_low, 'base64') AS base64_image
+                    SELECT image_key, title, tags, encode(image_data_low, 'base64') AS base64_image
                     FROM tb_fact_image_uploads
                     WHERE similarity(LOWER(tags), %s) > 0.48
                        OR LOWER(tags) ILIKE %s
@@ -388,10 +389,20 @@ def detect_people_and_images(input: str) -> list:
                 rows = cursor.fetchall()
 
             if rows:
-                for title, base64_img in rows:
-                    if base64_img:
-                        local_photos.append(f"data:image/jpeg;base64,{base64_img}")
-                matched_title = rows[0][0]
+                for image_key, title, tags, base64_img in rows:
+                    if not base64_img:
+                        continue
+                    tag_key = tags.strip().lower() if tags else "unknown"
+                    if tag_key not in grouped_by_tag:
+                        grouped_by_tag[tag_key] = {
+                            "tag": tag_key,
+                            "matched_title": title,
+                            "images": []
+                        }
+                    grouped_by_tag[tag_key]["images"].append({
+                        "image_key": image_key,
+                        "base64": f"data:image/jpeg;base64,{base64_img}"
+                    })
 
             cursor.close()
             conn.close()
@@ -402,9 +413,9 @@ def detect_people_and_images(input: str) -> list:
         results.append({
             "name": name,
             "type": "person" if label == "PERSON" else "brand",
-            "matched_title": matched_title,
-            "local_photos": local_photos
+            "groups": list(grouped_by_tag.values()) if grouped_by_tag else []
         })
+
     return results
     
 
@@ -1075,6 +1086,57 @@ def get_chat_history_detail_for_user(request: ChatHistoryRequest):
         db.connection.rollback()
         logging.error(f"❌ Error fetching chat history: {e}")
         return JSONResponse(status_code=500, content={"status": False, "error": str(e)})
+
+
+@app.get("/get_image_medium")
+async def get_image_medium(image_key: str = Query(...)):
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT encode(image_data_medium, 'base64')
+            FROM tb_fact_image_uploads
+            WHERE image_key = %s
+            LIMIT 1
+        """, (image_key,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not row or not row[0]:
+            return JSONResponse(content={"status": False, "error": "Not found"}, status_code=404)
+
+        return {"status": True, "image_base64": f"data:image/jpeg;base64,{row[0]}"}
+
+    except Exception as e:
+        return JSONResponse(content={"status": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/get_image_full")
+async def get_image_full(image_key: str = Query(...)):
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT encode(image_data, 'base64')
+            FROM tb_fact_image_uploads
+            WHERE image_key = %s
+            LIMIT 1
+        """, (image_key,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not row or not row[0]:
+            return JSONResponse(content={"status": False, "error": "Not found"}, status_code=404)
+
+        return {"status": True, "image_base64": f"data:image/jpeg;base64,{row[0]}"}
+
+    except Exception as e:
+        return JSONResponse(content={"status": False, "error": str(e)}, status_code=500)
+
+
+
 
 # ----------------- Router (for initial tool type classification) -----------------
 def route_tool(state):
