@@ -404,20 +404,20 @@ from langchain_core.tools import tool
 
 # ✅ Load Whisper ONCE
 whisper_model = whisper.load_model("base")  # Or "small", "medium" for more accuracy
-import os
+# ✅ Patch PATH once
 import subprocess
+if "/usr/bin" not in os.environ["PATH"]:
+    os.environ["PATH"] += ":/usr/bin"
+print("✅ Runtime PATH:", os.environ["PATH"])
+print("✅ ffmpeg version:", subprocess.getoutput("ffmpeg -version"))
 
-print("✅ Effective PATH:", os.environ.get("PATH"))
-print("✅ Can run ffmpeg version:\n", subprocess.getoutput("ffmpeg -version"))
+# ✅ Load Whisper ONCE
+whisper_model = whisper.load_model("base")
 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Whisper-only tool:
-    - Searches YouTube for videos on `input`
-    - Downloads audio with yt-dlp
-    - Transcribes with Whisper
-    - Returns: [{title, video_url, summary}]
+    📺 Whisper-only tool, bulletproof with PATH patch.
     """
     from googleapiclient.discovery import build
 
@@ -431,7 +431,6 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         type="video",
         part="snippet",
         maxResults=2,
-        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # Or remove to search all channels
     ).execute()
 
     videos = []
@@ -447,8 +446,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
             with TemporaryDirectory() as tmpdir:
                 audio_path = os.path.join(tmpdir, f"{video_id}.mp3")
 
-                # ✅ Explicit ffmpeg path (adjust if needed)
-                ffmpeg_path = "/usr/bin"  # 👈 Confirm with `which ffmpeg`
+                ffmpeg_path = "/usr/bin"
 
                 ydl_opts = {
                     'format': 'bestaudio/best',
@@ -473,7 +471,6 @@ def fetch_youtube_videos(input: str) -> List[dict]:
             transcript_text = None
 
         if transcript_text:
-            # 👉 Replace this with your real LLM call if needed!
             summary = " ".join(transcript_text.split()[:50]) + "..."
         else:
             summary = f"No transcript. Based on title: {title}"
@@ -485,6 +482,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         })
 
     return videos
+
         
 @tool
 def detect_people_and_images(input: str) -> list:
