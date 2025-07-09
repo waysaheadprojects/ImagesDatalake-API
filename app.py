@@ -306,50 +306,72 @@ llm_chain = LLMChain(
 @tool
 def query_zoho_leads(question: str) -> str:
     """
-    🧠 NL ➜ SQL ➜ STG Tool.
-    Generates valid SELECT SQL using LLM,
-    runs it safely on IMDL_STG_DEV,
-    returns HTML result or error.
+    🧠 NL ➜ SQL ➜ Execute ➜ HTML.
+    Tries multiple variations if no data found.
     """
-    sql = llm_chain.run({"question": question}).strip()
 
-    # ✅ Print to console
-    print(f"🔍 Generated SQL: {sql}")
+    max_retries = 5
+    attempt = 0
+    fallback_questions = [
+        question,
+        f"Use broader fuzzy match for: {question}",
+        f"Ignore participant profile if needed: {question}",
+        f"Only event name: {question}",
+        f"Only full_name or organisation: {question}",
+        f"Try different column combinations: {question}"
+    ]
 
-    # ✅ Log to file or terminal if logging is configured
-    logging.info(f"🔍 Generated SQL: {sql}")
+    conn_params = {
+        "host": os.environ.get("POSTGRES_HOST"),
+        "port": int(os.getenv("POSTGRES_PORT", 5432)),
+        "dbname": os.environ.get("POSTGRES_STG_DB"),
+        "user": os.environ.get("POSTGRES_STG_USER"),
+        "password": os.environ.get("POSTGRES_STG_PASSWORD")
+    }
 
-    if not sql.lower().startswith("select"):
-        return "<div><p>❌ Invalid query generated. Please rephrase your question.</p></div>"
+    if not all(conn_params.values()):
+        logging.error("❌ DB connection env vars missing")
+        return "<div><p>❌ DB connection not configured properly.</p></div>"
 
-    try:
-        conn_params = {
-            "host": os.environ["POSTGRES_HOST"],
-            "port": int(os.getenv("POSTGRES_PORT", 5432)),
-            "dbname": os.environ["POSTGRES_STG_DB"],
-            "user": os.environ["POSTGRES_STG_USER"],
-            "password": os.environ["POSTGRES_STG_PASSWORD"]
-        }
+    while attempt < max_retries and attempt < len(fallback_questions):
+        q = fallback_questions[attempt]
+        sql = llm_chain.run({"question": q}).strip()
 
-        with psycopg2.connect(**conn_params) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql)
-                rows = cur.fetchall()
+        logging.info(f"🔍 Attempt {attempt + 1}: {sql}")
 
-        if not rows:
-            return "<div><p>✅ No matching leads found.</p></div>"
+        if not sql.lower().startswith("select"):
+            logging.warning("❌ Non-SELECT query generated.")
+            attempt += 1
+            continue
 
-        html = "<div><h3>✅ Matching Leads:</h3><ul>"
-        for row in rows:
-            row_str = ", ".join(str(col) for col in row)
-            html += f"<li>{row_str}</li>"
-        html += "</ul></div>"
+        if ";" in sql[:-1]:
+            logging.warning("❌ Multiple statements detected.")
+            attempt += 1
+            continue
 
-        return html
+        try:
+            with psycopg2.connect(**conn_params) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql)
+                    rows = cur.fetchall()
+                    colnames = [desc[0] for desc in cur.description]
 
-    except Exception as e:
-        logging.exception("❌ SQL execution failed")
-        return f"<div><p>❌ Error running your query: {str(e)}</p></div>"
+            if rows:
+                html = "<div><h3>✅ Matching Leads:</h3><table border='1'><tr>"
+                for col in colnames:
+                    html += f"<th>{col}</th>"
+                html += "</tr>"
+                for row in rows:
+                    html += "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
+                html += "</table></div>"
+                return html
+
+        except Exception as e:
+            logging.exception(f"❌ Query failed on attempt {attempt + 1}")
+
+        attempt += 1
+
+    return "<div><p>✅ Tried multiple variations — no matching leads found.</p></div>"
 
 @tool
 def retrieve_documents(input: str) -> str:
