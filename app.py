@@ -966,11 +966,11 @@ async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_c
 
         # 1️⃣ Search with scores
         docs_and_scores = vector_store.similarity_search_with_relevance_scores(
-            question, k=5  # fetch a few to check
+            question, k=10  # fetch a few to check
         )
 
         # 2️⃣ Stricter similarity filter
-        threshold = 0.80  # 👈 stricter: 80%+ cosine similarity
+        threshold = 0.70  # 👈 stricter: 80%+ cosine similarity
         filtered = [
             (doc, score) for doc, score in docs_and_scores if score >= threshold
         ]
