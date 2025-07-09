@@ -173,15 +173,39 @@ SQL_DB_URI = (
 # ✅ 2️⃣ SQLDatabase + LLM agent
 # -------------------------------
 
-# Connect SQLDatabase
+ZOHO_CRM_TABLE_INFO = """
+Table: tb_zoho_crm_lead
+
+Columns:
+- id: INT or UUID
+- full_name: TEXT
+- email: TEXT
+- secondary_email: TEXT
+- organisation: TEXT
+- designation: TEXT
+- event_name: TEXT
+- participant_profile: TEXT
+- vertical: TEXT
+- main_category: TEXT
+- sub_category1: TEXT
+- sub_category2: TEXT
+- region: TEXT
+- country: TEXT
+- dbtimestamp: TIMESTAMP
+"""
+
+# ---------------------------------------
+# ✅ Build SQLDatabase with pinned schema
+# ---------------------------------------
 sql_db = SQLDatabase.from_uri(
     SQL_DB_URI,
-    include_tables=["tb_zoho_crm_lead"]
+    include_tables=["tb_zoho_crm_lead"],
+    sample_rows_in_table_info=0,
+    custom_table_info=ZOHO_CRM_TABLE_INFO
 )
 
-
 # LLM (OpenAI or Claude, match your setup)
-sql_llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0)
+sql_llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
 # Toolkit
 sql_toolkit = SQLDatabaseToolkit(db=sql_db, llm=sql_llm)
