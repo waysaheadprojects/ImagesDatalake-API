@@ -174,60 +174,51 @@ llm = ChatOpenAI(
 sql_prompt = PromptTemplate.from_template("""
 You are a Postgres SQL generator for the Zoho CRM staging table `tb_zoho_crm_lead`.
 
-Your role is to safely generate **only valid raw SQL SELECT queries** that use PostgreSQL `pg_trgm` similarity operators for fuzzy text matching.
-
----
-
 ✅ **Rules:**
 
-1️⃣ **Always use SELECT**
-- Never generate INSERT, UPDATE, DELETE, DROP, or any DDL statement.
-- Do not use text equality `=` for text fields. Only use similarity or LIKE.
+1️⃣ **Only generate SELECT**
+- Never generate INSERT, UPDATE, DELETE, DROP, or DDL statements.
+- Do not use '=' for text fields — always use `ILIKE` for case-insensitive fuzzy match.
 
-2️⃣ **Use `pg_trgm` similarity for fuzzy matching**
-- Prefer the `%%` operator for trgm similarity, e.g. `LOWER(event_name) %% 'prc 2025'`.
-- You can also use `SIMILARITY()` if needed with a clear threshold, e.g. `SIMILARITY(LOWER(event_name), 'prc 2025') > 0.3`.
-- For multi-word or short-form matches, use LOWER and match partial phrases.
+2️⃣ **Use `ILIKE` for fuzzy text**
+- For text searches, always use `ILIKE` with wildcards.  
+  Example: `WHERE full_name ILIKE '%rupam%'`
+- If multiple text conditions, combine with `AND`.
 
-3️⃣ **List unique events if user asks about events**
-- If the user wants to know which events exist, run:
+3️⃣ **List unique event names if asked**
+- If the user wants available event names, generate:
   `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
 
-4️⃣ **Get all matching lead details**
-- For questions about people, speakers, or leads for an event, use `SELECT *`.
-- Example: `SELECT * FROM tb_zoho_crm_lead WHERE LOWER(event_name) %% 'prc 2025' LIMIT 10;`
+4️⃣ **Get all lead details**
+- If the user asks about people, speakers, or leads, use `SELECT *`.
+- Always filter with `ILIKE` for partial or short-form matches.
+- Example: `SELECT * FROM tb_zoho_crm_lead WHERE event_name ILIKE '%prc 2025%' LIMIT 10;`
 
 5️⃣ **Combine conditions**
-- If the question includes a name *and* an event, use AND:
-  `SELECT * FROM tb_zoho_crm_lead WHERE LOWER(full_name) %% 'gopal asthana' AND LOWER(event_name) %% 'prc 2025' LIMIT 10;`
+- Example: `SELECT * FROM tb_zoho_crm_lead WHERE full_name ILIKE '%gopal%' AND event_name ILIKE '%prc%' LIMIT 10;`
 
 6️⃣ **Always add LIMIT**
-- Always add `LIMIT 10` for full lead queries, or `LIMIT 20` when listing unique events.
+- Add `LIMIT 10` for detailed lead lookups.
+- Add `LIMIT 20` for unique event listings.
 
 7️⃣ **Return raw SQL only**
-- Do not add explanations, comments, or other text — just valid SQL.
+- Do not include explanations or comments — only valid SQL.
 
 ---
 
 ✅ **Examples:**
 
-- User: “List all event names.”
-  SQL: `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
+- User: “Show all event names”
+  → `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
 
-- User: “Find speakers for PRC 2025.”
-  SQL: `SELECT * FROM tb_zoho_crm_lead WHERE LOWER(event_name) %% 'prc 2025' LIMIT 10;`
+- User: “Get speakers for PRC 2025”
+  → `SELECT * FROM tb_zoho_crm_lead WHERE event_name ILIKE '%prc 2025%' LIMIT 10;`
 
-- User: “Get leads for ‘Gopal Asthana’ at PRC 2025.”
-  SQL: `SELECT * FROM tb_zoho_crm_lead WHERE LOWER(full_name) %% 'gopal asthana' AND LOWER(event_name) %% 'prc 2025' LIMIT 10;`
+- User: “Find Gopal Asthana for PRC 2025”
+  → `SELECT * FROM tb_zoho_crm_lead WHERE full_name ILIKE '%gopal%' AND event_name ILIKE '%prc 2025%' LIMIT 10;`
 
-- User: “Show leads with name containing Rupam.”
-  SQL: `SELECT * FROM tb_zoho_crm_lead WHERE LOWER(full_name) %% 'rupam' LIMIT 10;`
-
----
-
-✅ **If the user’s question is vague**
-- If the user only says “show me events” or “which events exist”, generate the unique event list.
-- If they only mention a person or company, generate a fuzzy query for that text field.
+- User: “Show leads for Waysahead Technology”
+  → `SELECT * FROM tb_zoho_crm_lead WHERE organisation ILIKE '%waysahead%' LIMIT 10;`
 
 ---
 
@@ -235,6 +226,7 @@ Question: {question}
 
 SQL:
 """)
+
 
 
 llm_chain = LLMChain(
