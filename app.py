@@ -402,17 +402,17 @@ from tempfile import TemporaryDirectory
 from typing import List
 from langchain_core.tools import tool
 
-# ✅ Load Whisper ONCE outside the tool
-whisper_model = whisper.load_model("base")  # Or 'small', 'medium', 'large' as needed
+# ✅ Load Whisper ONCE
+whisper_model = whisper.load_model("base")  # Or "small", "medium" for more accuracy
 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Whisper-only YouTube tool.
-    - Searches YouTube for videos about `input`
-    - Downloads audio using yt-dlp
+    📺 Whisper-only tool:
+    - Searches YouTube for videos on `input`
+    - Downloads audio with yt-dlp
     - Transcribes with Whisper
-    - Returns: List[{title, video_url, summary}]
+    - Returns: [{title, video_url, summary}]
     """
     from googleapiclient.discovery import build
 
@@ -441,16 +441,22 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         try:
             with TemporaryDirectory() as tmpdir:
                 audio_path = os.path.join(tmpdir, f"{video_id}.mp3")
+
+                # ✅ Explicit ffmpeg path (adjust if needed)
+                ffmpeg_path = "/usr/bin"  # 👈 Confirm with `which ffmpeg`
+
                 ydl_opts = {
                     'format': 'bestaudio/best',
                     'outtmpl': audio_path,
+                    'ffmpeg_location': ffmpeg_path,
                     'postprocessors': [{
                         'key': 'FFmpegExtractAudio',
                         'preferredcodec': 'mp3',
                     }],
                 }
+
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    logging.info(f"🔊 Downloading audio for {video_id}")
+                    logging.info(f"🔊 Downloading audio for {video_id} with explicit ffmpeg path")
                     ydl.download([url])
 
                 result = whisper_model.transcribe(audio_path)
@@ -462,10 +468,10 @@ def fetch_youtube_videos(input: str) -> List[dict]:
             transcript_text = None
 
         if transcript_text:
-            # You can replace with LLM call:
+            # 👉 Replace this with your real LLM call if needed!
             summary = " ".join(transcript_text.split()[:50]) + "..."
         else:
-            summary = f"No transcript available. Based on title: {title}"
+            summary = f"No transcript. Based on title: {title}"
 
         videos.append({
             "title": title,
