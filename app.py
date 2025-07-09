@@ -1293,30 +1293,43 @@ async def get_image_full(image_key: str = Query(...)):
 
 
 # ----------------- Router (for initial tool type classification) -----------------
-def route_tool(state):
-    question = state["input"]
-    system_prompt = """
-    Decide the best tool to answer this question. Reply ONLY with the tool name.
+from langchain_core.runnables import RunnableLambda
+from langgraph.prebuilt import tools_condition
 
-    Tools available:
+def route_tool(state: dict):
+    question = state["messages"][-1]["content"]
+
+    router_prompt = """
+    Tools:
     - query_zoho_leads
     - retrieve_documents
     - fetch_youtube_videos
     - detect_people_and_images
     - get_attendee_images
 
-    Guidelines:
-    - For event attendees, emails, participant info → query_zoho_leads
-    - For quotes, mentions, descriptions from magazines/articles → retrieve_documents
-    - For videos (e.g., PRC, IFF, conferences) → fetch_youtube_videos
-    - For people image search (based on answer) → detect_people_and_images
-    - For showing images use -> get_attendee_images
-
-    ONLY output the tool name.
+    Pick only one. Just output the tool name.
     """
-    messages = [
-        {"role": "system", "content": system_prompt},
+
+    response = llm.invoke([
+        {"role": "system", "content": router_prompt},
         {"role": "user", "content": question}
-    ]
-    response = llm.invoke(messages).content.strip()
-    return {"tool": response}
+    ]).content.strip()
+
+    return {"next": response}
+
+router = RunnableLambda(route_tool)
+
+tools_condition = lambda state: state["next"]
+
+graph_builder = StateGraph(State)
+graph_builder.add_node("chatbot", chatbot)
+graph_builder.add_node("router", router)
+graph_builder.add_node("tools", ToolNode(tools=tools))
+graph_builder.add_edge(START, "chatbot")
+graph_builder.add_edge("tools", "chatbot")
+graph_builder.add_conditional_edges("chatbot", router)
+graph_builder.add_conditional_edges("router", tools_condition)
+
+memory = MemorySaver()
+graph = graph_builder.compile(checkpointer=memory)
+
