@@ -451,7 +451,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
             """
 
         summary = llm.invoke([{"role": "user", "content": prompt}]).strip()
-
+        print(summary)
         videos.append({
             "title": title,
             "video_url": url,
@@ -799,7 +799,7 @@ async def ask(payload: AskRequest, request: Request, current_user: dict = Depend
                 "  - Always respond ONLY with a raw valid SQL SELECT for `tb_zoho_crm_lead`.\n"
                 "  - NEVER guess or output fallback text.\n"
                 "  - If you don't have enough info, ask the user politely **inside a `<div><p>`**, but DO NOT generate a fallback text like \"I will try broader search\".\n\n"
-
+                " -- TRY TO ALWAYS RETURN WHAT THE PERSON IS SAYING IF THEIR YOUTUBE VIDEOS ARE AVAILAIABLE"
                 "📌 **`tb_zoho_crm_lead` structure:**\n"
                 "- `id`: INT or UUID\n"
                 "- `full_name`: TEXT\n"
