@@ -608,17 +608,7 @@ llm = Ollama(
     temperature=0
 )
 
-llm_with_tools = llm  # ✅ alias for clarity
-
-# ✅ 3️⃣ All your tool definitions must come **before** they are put into the list
-
-# EXAMPLES — adjust with your real functions:
-from your_module import (
-    query_zoho_leads,
-    retrieve_documents,
-    fetch_youtube_videos,
-    get_attendee_images
-)
+llm_with_tools = llm 
 
 # ✅ 4️⃣ Define the tools list
 tools = [
