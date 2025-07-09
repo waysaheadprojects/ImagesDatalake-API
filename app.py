@@ -402,22 +402,23 @@ from tempfile import TemporaryDirectory
 from typing import List
 from langchain_core.tools import tool
 
-# ✅ Load Whisper ONCE
-whisper_model = whisper.load_model("base")  # Or "small", "medium" for more accuracy
-# ✅ Patch PATH once
-import subprocess
+# ✅ Patch PATH so Whisper finds ffmpeg
 if "/usr/bin" not in os.environ["PATH"]:
     os.environ["PATH"] += ":/usr/bin"
 print("✅ Runtime PATH:", os.environ["PATH"])
 print("✅ ffmpeg version:", subprocess.getoutput("ffmpeg -version"))
 
 # ✅ Load Whisper ONCE
-whisper_model = whisper.load_model("base")
+whisper_model = whisper.load_model("base")  # or 'small', 'medium', 'large' for more accuracy
 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Whisper-only tool, bulletproof with PATH patch.
+    📺 Whisper-only tool.
+    - Searches YOUR channel for videos about `input`
+    - Downloads audio with yt-dlp
+    - Transcribes with Whisper
+    - Returns: [{title, video_url, summary}]
     """
     from googleapiclient.discovery import build
 
@@ -431,6 +432,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         type="video",
         part="snippet",
         maxResults=2,
+        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # ✅ YOUR channel ID
     ).execute()
 
     videos = []
@@ -446,7 +448,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
             with TemporaryDirectory() as tmpdir:
                 audio_path = os.path.join(tmpdir, f"{video_id}.mp3")
 
-                ffmpeg_path = "/usr/bin"
+                ffmpeg_path = "/usr/bin"  # confirm with which ffmpeg
 
                 ydl_opts = {
                     'format': 'bestaudio/best',
@@ -480,6 +482,8 @@ def fetch_youtube_videos(input: str) -> List[dict]:
             "video_url": url,
             "summary": summary
         })
+
+    return videos
 
     return videos
 
