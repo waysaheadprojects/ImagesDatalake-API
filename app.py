@@ -147,30 +147,37 @@ def get_s3_url_by_filename(file_name: str) -> str:
 import os
 import psycopg2
 import logging
-from urllib.parse import quote_plus
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain_core.tools import tool
 
 # ---------------------------------------------------------------------
-# ✅ 1️⃣ LLM — your same OpenAI key must be set
+# ✅ 0️⃣ Setup basic logging
+# ---------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
+# ---------------------------------------------------------------------
+# ✅ 1️⃣ Initialize LLM
 # ---------------------------------------------------------------------
 llm = ChatOpenAI(
-    model="gpt-4o",
+    model="gpt-4.1-nano",
     temperature=0
 )
 
 # ---------------------------------------------------------------------
-# ✅ 2️⃣ Prompt Template with strict rules for Zoho STG
+# ✅ 2️⃣ Prompt Template with strict Zoho STG rules
 # ---------------------------------------------------------------------
 sql_prompt = PromptTemplate.from_template("""
 You are a Postgres SQL generator for the Zoho CRM table `tb_zoho_crm_lead`.
 
 ✅ Rules:
-- Use SELECT only.
-- Use LOWER() + LIKE for fuzzy matches on text: full_name, organisation, event_name, region, country.
-- Never use '=' for text.
+- Only use SELECT.
+- Use LOWER() + LIKE for fuzzy text matches: full_name, organisation, event_name, region, country.
+- Never use '=' for text fields.
 - Always add LIMIT 10.
 - Return only valid raw SQL — no explanation.
 - Example: SELECT full_name, organisation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;
@@ -186,50 +193,55 @@ llm_chain = LLMChain(
 )
 
 # ---------------------------------------------------------------------
-# ✅ 3️⃣ Robust psycopg2 executor — STG connection only
+# ✅ 3️⃣ Robust executor for STG only
 # ---------------------------------------------------------------------
 @tool
 def query_zoho_leads(question: str) -> str:
     """
-    🧠 Robust NL ➜ SQL ➜ STG Tool.
-    Generates valid SELECT using LLM.
-    Runs it on IMDL_STG_DEV safely.
-    Always returns HTML or SQL result.
+    🧠 NL ➜ SQL ➜ STG Tool.
+    Generates valid SELECT SQL using LLM,
+    runs it safely on IMDL_STG_DEV,
+    returns HTML result or error.
     """
     sql = llm_chain.run({"question": question}).strip()
 
+    # ✅ Print to console
+    print(f"🔍 Generated SQL: {sql}")
+
+    # ✅ Log to file or terminal if logging is configured
     logging.info(f"🔍 Generated SQL: {sql}")
 
     if not sql.lower().startswith("select"):
-        return "<div><p>Sorry, I could not generate a valid SELECT query. Please refine your question.</p></div>"
+        return "<div><p>❌ Invalid query generated. Please rephrase your question.</p></div>"
 
     try:
-        conn = psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST"),
-            port=int(os.getenv("POSTGRES_PORT", "5432")),
-            dbname=os.getenv("POSTGRES_STG_DB"),  # ✅ STG DB
-            user=os.getenv("POSTGRES_STG_USER"),  # ✅ STG User
-            password=os.getenv("POSTGRES_STG_PASSWORD")  # ✅ STG Password
-        )
-        cur = conn.cursor()
-        cur.execute(sql)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
+        conn_params = {
+            "host": os.environ["POSTGRES_HOST"],
+            "port": int(os.getenv("POSTGRES_PORT", 5432)),
+            "dbname": os.environ["POSTGRES_STG_DB"],
+            "user": os.environ["POSTGRES_STG_USER"],
+            "password": os.environ["POSTGRES_STG_PASSWORD"]
+        }
+
+        with psycopg2.connect(**conn_params) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
 
         if not rows:
-            return "<div><p>✅ No matching leads found. Please refine your search.</p></div>"
+            return "<div><p>✅ No matching leads found.</p></div>"
 
         html = "<div><h3>✅ Matching Leads:</h3><ul>"
         for row in rows:
-            html += f"<li>{row}</li>"
+            row_str = ", ".join(str(col) for col in row)
+            html += f"<li>{row_str}</li>"
         html += "</ul></div>"
 
         return html
 
     except Exception as e:
-        logging.exception(f"❌ SQL execution failed: {e}")
-        return f"<div><p>❌ There was an error running your query: {str(e)}</p></div>"
+        logging.exception("❌ SQL execution failed")
+        return f"<div><p>❌ Error running your query: {str(e)}</p></div>"
 
 @tool
 def retrieve_documents(input: str) -> str:
