@@ -172,10 +172,8 @@ SQL_DB_URI = (
 # -------------------------------
 # ✅ 2️⃣ SQLDatabase + LLM agent
 # -------------------------------
-
-ZOHO_CRM_TABLE_INFO = """
-Table: tb_zoho_crm_lead
-
+ZOHO_CRM_TABLE_INFO = {
+    "tb_zoho_crm_lead": """
 Columns:
 - id: INT or UUID
 - full_name: TEXT
@@ -193,10 +191,8 @@ Columns:
 - country: TEXT
 - dbtimestamp: TIMESTAMP
 """
+}
 
-# ---------------------------------------
-# ✅ Build SQLDatabase with pinned schema
-# ---------------------------------------
 sql_db = SQLDatabase.from_uri(
     SQL_DB_URI,
     include_tables=["tb_zoho_crm_lead"],
