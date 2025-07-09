@@ -600,6 +600,10 @@ from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
 from typing_extensions import TypedDict, Annotated
 from langgraph.graph.message import add_messages
+from langgraph.graph import StateGraph, START
+from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.memory import MemorySaver  # ✅ ✅ ✅
 
 # ✅ 2️⃣ Ollama LLM + alias
 llm = Ollama(
