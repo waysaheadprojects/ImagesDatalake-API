@@ -396,14 +396,14 @@ def retrieve_documents(input: str) -> str:
     
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Improved YouTube tool:
-    - Searches videos
-    - Gets transcripts if available
-    - Uses LLM to generate a summary
-    - Always includes a summary, fallback if needed.
+    📺 Searches videos on India Retailing channel.
+    Always includes a transcript-based summary if possible.
+    Keeps same structure: title, video_url, summary.
     """
     from googleapiclient.discovery import build
 
@@ -414,7 +414,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
     yt = build("youtube", "v3", developerKey=api_key)
     results = yt.search().list(
         q=input, type="video", part="snippet", maxResults=3,
-        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # Your channel ID
+        channelId="UC8vvbk837aQ6kwxflCVMp1Q"
     ).execute()
 
     videos = []
@@ -424,7 +424,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         title = item["snippet"]["title"]
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        # ✅ Attempt to get transcript
+        # Try to fetch transcript
         transcript_text = None
         try:
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
@@ -432,26 +432,24 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         except (TranscriptsDisabled, NoTranscriptFound):
             transcript_text = None
 
-        # ✅ Build prompt for summary
+        # Build prompt for LLM
         if transcript_text:
             prompt = f"""
-            Below is a YouTube video transcript.
+            This is a transcript for a YouTube video:
 
             ---
             {transcript_text[:5000]}
             ---
 
-            Please write a short, clear, factual summary of what this video is about.
+            Write a short clear summary of what the speaker talks about.
             """
         else:
             prompt = """
-            There is no transcript for this video. 
-            Please write a very short, reasonable guess summary based only on its title:
-            "{title}"
+            No transcript found. Guess a short likely summary based only on the title: "{title}".
             """
 
         summary = llm.invoke([{"role": "user", "content": prompt}]).strip()
-        print(summary)
+
         videos.append({
             "title": title,
             "video_url": url,
@@ -459,7 +457,6 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         })
 
     return videos
-
         
 @tool
 def detect_people_and_images(input: str) -> list:
