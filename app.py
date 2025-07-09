@@ -595,25 +595,32 @@ def get_attendee_images(event_name: str) -> List[dict]:
 
 
 # ----------------- LangGraph Agent Setup -----------------
-from langchain_openai import ChatOpenAI
+from langchain_community.llms import Ollama
 from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
-from typing_extensions import TypedDict
-from typing import Annotated
+from typing_extensions import TypedDict, Annotated
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
 
-# Ollama local LLM
+# ✅ 2️⃣ Ollama LLM + alias
 llm = Ollama(
     model="llama3.2",
     base_url="http://localhost:11434",
     temperature=0
 )
 
-# ✅ Alias it for clarity
-llm_with_tools = llm
+llm_with_tools = llm  # ✅ alias for clarity
 
-# Tools
+# ✅ 3️⃣ All your tool definitions must come **before** they are put into the list
+
+# EXAMPLES — adjust with your real functions:
+from your_module import (
+    query_zoho_leads,
+    retrieve_documents,
+    fetch_youtube_videos,
+    get_attendee_images
+)
+
+# ✅ 4️⃣ Define the tools list
 tools = [
     query_zoho_leads,
     retrieve_documents,
@@ -621,23 +628,24 @@ tools = [
     get_attendee_images
 ]
 
-# State type
+# ✅ 5️⃣ Shared state type for LangGraph
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
-# Chatbot node
+# ✅ 6️⃣ LLM chatbot node
 def chatbot(state: State):
     return {"messages": [llm_with_tools.invoke(state["messages"])]}
 
-# Graph
+# ✅ 7️⃣ Build your graph
 graph_builder = StateGraph(State)
 graph_builder.add_node("chatbot", chatbot)
-graph_builder.add_node("tools", ToolNode(tools=tools))
+graph_builder.add_node("tools", ToolNode(tools=tools))  # ✅ uses 'tools' that exists
 graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 graph_builder.add_edge(START, "chatbot")
 
 graph = graph_builder.compile()
+
 # Shared state type
 class State(TypedDict):
     messages: Annotated[list, add_messages]
