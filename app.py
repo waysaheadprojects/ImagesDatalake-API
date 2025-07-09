@@ -145,103 +145,91 @@ def get_s3_url_by_filename(file_name: str) -> str:
 
 # ----------------- Tool Definitions ----------------
 import os
+import psycopg2
+import logging
 from urllib.parse import quote_plus
 from langchain_openai import ChatOpenAI
-from langchain_community.utilities import SQLDatabase
-from langchain.agents import create_sql_agent
-from langchain.agents.agent_toolkits import SQLDatabaseToolkit
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
 from langchain_core.tools import tool
 
-# -------------------------------
-# ✅ 1️⃣ Safe Postgres URI
-# -------------------------------
-
-# Encode special characters in password safely!
-password = quote_plus(os.getenv("POSTGRES_STG_PASSWORD"))
-
-SQL_DB_URI = (
-    f"postgresql+psycopg2://"
-    f"{os.getenv('POSTGRES_STG_USER')}:{password}@"
-    f"{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT', '5432')}/"
-    f"{os.getenv('POSTGRES_STG_DB')}"
-)
-
-# Example:
-# postgresql+psycopg2://imdl_dwh_da_user:ImagesDWH%402025@45.194.46.142:5432/IMDL_DWH_DEV
-
-# -------------------------------
-# ✅ 2️⃣ SQLDatabase + LLM agent
-# -------------------------------
-ZOHO_CRM_TABLE_INFO = {
-    "tb_zoho_crm_lead": """
-Columns:
-- id: INT or UUID
-- full_name: TEXT
-- email: TEXT
-- secondary_email: TEXT
-- organisation: TEXT
-- designation: TEXT
-- event_name: TEXT
-- participant_profile: TEXT
-- vertical: TEXT
-- main_category: TEXT
-- sub_category1: TEXT
-- sub_category2: TEXT
-- region: TEXT
-- country: TEXT
-- dbtimestamp: TIMESTAMP
-"""
-}
-
-sql_db = SQLDatabase.from_uri(
-    SQL_DB_URI,
-    include_tables=["tb_zoho_crm_lead"],
-    sample_rows_in_table_info=0,
-    custom_table_info=ZOHO_CRM_TABLE_INFO
-)
-
-# ---------------------------------------
-# ✅ LLM with pinned system prompt
-# ---------------------------------------
+# ---------------------------------------------------------------------
+# ✅ 1️⃣ LLM — your same OpenAI key must be set
+# ---------------------------------------------------------------------
 llm = ChatOpenAI(
-    model="gpt-4.1-nano",
+    model="gpt-4o",
     temperature=0
 )
 
-# ✅ SQL Agent: force explicit system instruction
-sql_toolkit = SQLDatabaseToolkit(db=sql_db, llm=llm)
+# ---------------------------------------------------------------------
+# ✅ 2️⃣ Prompt Template with strict rules for Zoho STG
+# ---------------------------------------------------------------------
+sql_prompt = PromptTemplate.from_template("""
+You are a Postgres SQL generator for the Zoho CRM table `tb_zoho_crm_lead`.
 
-sql_agent = create_sql_agent(
-    llm=llm,
-    toolkit=sql_toolkit,
-    verbose=True,
-    agent_type="zero-shot-react-description",
-    system_message="""
-You are a Postgres SQL expert for CRM data.
-
-✅ Always:
+✅ Rules:
 - Use SELECT only.
-- Use LOWER() + LIKE for fuzzy matching on text columns like full_name, organisation, event_name.
-- Never use '=' for text fields — only use '=' for exact numeric or ID matches.
+- Use LOWER() + LIKE for fuzzy matches on text: full_name, organisation, event_name, region, country.
+- Never use '=' for text.
 - Always add LIMIT 10.
-- Example: SELECT * FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;
+- Return only valid raw SQL — no explanation.
+- Example: SELECT full_name, organisation FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;
 
-✅ Never:
-- Never do DELETE, DROP, INSERT or UPDATE.
-- Never guess table names — use only tb_zoho_crm_lead.
-"""
+Question: {question}
+
+SQL:
+""")
+
+llm_chain = LLMChain(
+    llm=llm,
+    prompt=sql_prompt
 )
 
-# ---------------------------------------
-# ✅ The final @tool version
-# ---------------------------------------
+# ---------------------------------------------------------------------
+# ✅ 3️⃣ Robust psycopg2 executor — STG connection only
+# ---------------------------------------------------------------------
 @tool
 def query_zoho_leads(question: str) -> str:
     """
-    🧠 Dynamic Zoho CRM SQL Tool.
-    Uses a pinned prompt to force safe fuzzy SELECT queries.
+    🧠 Robust NL ➜ SQL ➜ STG Tool.
+    Generates valid SELECT using LLM.
+    Runs it on IMDL_STG_DEV safely.
+    Always returns HTML or SQL result.
     """
-    return sql_agent.run(question)
+    sql = llm_chain.run({"question": question}).strip()
+
+    logging.info(f"🔍 Generated SQL: {sql}")
+
+    if not sql.lower().startswith("select"):
+        return "<div><p>Sorry, I could not generate a valid SELECT query. Please refine your question.</p></div>"
+
+    try:
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST"),
+            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            dbname=os.getenv("POSTGRES_STG_DB"),  # ✅ STG DB
+            user=os.getenv("POSTGRES_STG_USER"),  # ✅ STG User
+            password=os.getenv("POSTGRES_STG_PASSWORD")  # ✅ STG Password
+        )
+        cur = conn.cursor()
+        cur.execute(sql)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not rows:
+            return "<div><p>✅ No matching leads found. Please refine your search.</p></div>"
+
+        html = "<div><h3>✅ Matching Leads:</h3><ul>"
+        for row in rows:
+            html += f"<li>{row}</li>"
+        html += "</ul></div>"
+
+        return html
+
+    except Exception as e:
+        logging.exception(f"❌ SQL execution failed: {e}")
+        return f"<div><p>❌ There was an error running your query: {str(e)}</p></div>"
 
 @tool
 def retrieve_documents(input: str) -> str:
