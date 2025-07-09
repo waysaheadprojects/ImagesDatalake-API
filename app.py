@@ -173,33 +173,43 @@ ALLOWED_COLUMNS = {
 @tool("query_zoho_leads_sql", args_schema=QueryZohoSQLArgs, return_direct=True)
 def query_zoho_leads(sql: str, limit: int = 10) -> str:
     """
-    📌 Runs validated SELECT-only query on tb_zoho_crm_lead.
-    ✅ Rules:
-      - Only SELECT allowed
-      - Valid columns only
-      - LIMIT 100 enforced
+    ✅ Runs safe SELECT-only SQL on tb_zoho_crm_lead
+    Enforces:
+    - SELECT only
+    - Allowed columns only
+    - No SELECT *
+    - LIMIT 100 max
     """
-    raw_sql = sql.strip().strip(";")
-
-    if not raw_sql.lower().startswith("select"):
-        return "<div><p>❌ Only raw SQL SELECT allowed. Please try again with valid SQL.</p></div>"
-
+    raw_sql = sql.strip().rstrip(";").replace("\n", " ").replace("\t", " ")
     lower_sql = raw_sql.lower()
-    try:
-        cols_part = lower_sql.split("from")[0].replace("select", "").strip()
-        cols = [c.strip().split()[-1].replace(",", "") for c in cols_part.split(",")]
-        if "*" in cols:
-            return "<div><p>❌ SELECT * is not allowed. List columns explicitly.</p></div>"
-        for col in cols:
-            if col not in ALLOWED_COLUMNS:
-                return f"<div><p>❌ Column `{col}` is invalid. Please use valid CRM columns only.</p></div>"
-    except Exception as e:
-        return f"<div><p>❌ Failed to parse columns: {e}</p></div>"
 
+    if not lower_sql.startswith("select"):
+        return "<div><p>❌ Only raw SELECT allowed. Please retry with valid SQL.</p></div>"
+
+    # Extract what’s between SELECT and FROM
+    pattern = r"select\s+(.*?)\s+from"
+    match = re.search(pattern, lower_sql, re.IGNORECASE)
+    if not match:
+        return "<div><p>❌ Couldn’t find columns before FROM. Please check your SQL.</p></div>"
+
+    cols_part = match.group(1).strip()
+    if not cols_part:
+        return "<div><p>❌ No columns specified. List them explicitly.</p></div>"
+
+    cols = [c.strip().split()[-1].replace(",", "") for c in cols_part.split(",")]
+
+    if "*" in cols:
+        return "<div><p>❌ `SELECT *` is not allowed. List valid columns.</p></div>"
+
+    invalid = [col for col in cols if col not in ALLOWED_COLUMNS]
+    if invalid:
+        return f"<div><p>❌ Invalid columns: {', '.join(invalid)}. Allowed: {', '.join(sorted(ALLOWED_COLUMNS))}</p></div>"
+
+    # Add LIMIT only if not present
     if "limit" not in lower_sql:
         raw_sql += f" LIMIT {min(limit, 100)}"
 
-    print(f"📌 Running SQL: {raw_sql}")
+    print(f"📌 Final SQL: {raw_sql}")
 
     try:
         conn = connect(**CRM_DB_CONN)
@@ -208,17 +218,17 @@ def query_zoho_leads(sql: str, limit: int = 10) -> str:
         rows = cur.fetchall()
         cur.close()
         conn.close()
-
-        if not rows:
-            return "<div><p>✅ Query ran. No rows found.</p></div>"
-
-        output = []
-        for idx, row in enumerate(rows, 1):
-            output.append(f"{idx}. " + " | ".join([f"{k}: {v}" for k, v in row.items()]))
-        return "<div><p>" + "<br>".join(output) + "</p></div>"
-
     except Exception as e:
-        return f"<div><p>❌ Query failed: {e}</p></div>"
+        return f"<div><p>❌ SQL execution failed: {e}</p></div>"
+
+    if not rows:
+        return "<div><p>✅ Query ran but no rows matched.</p></div>"
+
+    html_rows = []
+    for idx, row in enumerate(rows, 1):
+        html_rows.append(f"{idx}. " + " | ".join(f"{k}: {v}" for k, v in row.items()))
+
+    return "<div><p>" + "<br>".join(html_rows) + "</p></div>"
 
 @tool
 def retrieve_documents(input: str) -> str:
