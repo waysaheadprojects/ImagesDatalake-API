@@ -387,8 +387,6 @@ def detect_people_and_images(input: str) -> list:
             "matched_title": matched_title,
             "local_photos": local_photos
         })
-
-    print("🎉 FINAL RESULTS:", results)
     return results
     
 
