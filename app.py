@@ -174,46 +174,105 @@ llm = ChatOpenAI(
 sql_prompt = PromptTemplate.from_template("""
 You are a Postgres SQL generator for the Zoho CRM staging table `tb_zoho_crm_lead`.
 
-✅ **Rules:**
+---
 
-1️⃣ Only use SELECT — never generate INSERT, UPDATE, DELETE, or DDL.
+✅ **Table Overview**
 
-2️⃣ Always use `ILIKE` with wildcards for text:
-- Never use '=' for text.
-- Example: `event_name ILIKE '%prc%'`.
-
-3️⃣ If the user’s query mentions an event short form *and* a year (like PRC 2024),
-generate **multiple ILIKE conditions joined by AND**.
-- Example: `event_name ILIKE '%prc%' AND event_name ILIKE '%2024%'`.
-
-4️⃣ If the user wants all event names, use:
-  `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
-
-5️⃣ For speakers or leads, use `SELECT *` and filter with multiple ILIKE conditions if needed.
-
-6️⃣ Always add `LIMIT 10` for full lead queries.
-
-7️⃣ Return only raw SQL — no explanations.
+This table stores lead, speaker, and event details.  
+Key columns include:
+- `id` → Primary key for each record.
+- `full_name` → Full name of the person (speaker, delegate, jury, exhibitor, etc).
+- `designation` → Job title or role.
+- `organisation` → Company or organization name.
+- `participant_profile` → Role in the event (e.g. Speaker, Delegate, Jury, Exhibitor, Others).
+- `event_name` → Full name of the event (often includes year and keywords like “PRC” or “India Fashion Forum”).
+- `region` → Region name.
+- `country` → Country name.
 
 ---
 
-✅ **Examples:**
+✅ **Strict SQL Generation Rules**
 
-- **Get speakers for PRC 2024:**  
-  `SELECT * FROM tb_zoho_crm_lead WHERE event_name ILIKE '%prc%' AND event_name ILIKE '%2024%' LIMIT 10;`
+1️⃣ **SELECT only**
+- Always generate `SELECT` queries only.
+- Never generate `INSERT`, `UPDATE`, `DELETE`, `DROP`, or any DDL statements.
 
-- **Find speakers for PRC India 2025:**  
-  `SELECT * FROM tb_zoho_crm_lead WHERE event_name ILIKE '%prc%' AND event_name ILIKE '%2025%' LIMIT 10;`
+2️⃣ **Allowed query types**
+- `SELECT *` for full records.
+- Or `SELECT column1, column2, ...` for specific fields.
+- Or `SELECT DISTINCT column` when listing unique values (e.g. event names).
 
-- **Find Gopal Asthana for PRC 2024:**  
-  `SELECT * FROM tb_zoho_crm_lead WHERE full_name ILIKE '%gopal%' AND event_name ILIKE '%prc%' AND event_name ILIKE '%2024%' LIMIT 10;`
+3️⃣ **Fuzzy text matching**
+- Always use `ILIKE` with wildcards (`%`) for text filters.
+- Never use `=` for text columns.
+- Example: `WHERE full_name ILIKE '%gopal%'`
 
-- **Show all event names:**  
-  `SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;`
+4️⃣ **Partial event names**
+- If the user’s question includes an event name *and* a year, split into multiple `ILIKE` conditions joined by `AND`.
+- Example: `WHERE event_name ILIKE '%prc%' AND event_name ILIKE '%2024%'`
+
+5️⃣ **Combine multiple fields**
+- Combine `ILIKE` conditions for names, events, organisation, region, or country as needed.
+- Use `AND` between each condition.
+- Example: `WHERE full_name ILIKE '%rupam%' AND organisation ILIKE '%waysahead%'`
+
+6️⃣ **Always use LIMIT**
+- Add `LIMIT 10` for full or partial record queries.
+- Add `LIMIT 20` when listing unique event names.
+
+7️⃣ **Return only valid raw SQL**
+- Do not add any explanations, comments, or natural language output. Just valid SQL.
 
 ---
 
-Question: {question}
+✅ **Good Examples**
+
+1️⃣ **Show all columns for delegates at PRC 2024**
+```sql
+SELECT * FROM tb_zoho_crm_lead
+WHERE event_name ILIKE '%prc%' AND event_name ILIKE '%2024%' AND participant_profile ILIKE '%delegate%'
+LIMIT 10;
+
+2️⃣ Show only names, designation, and participant profile for India Fashion Forum 2024
+SELECT full_name, designation, participant_profile
+FROM tb_zoho_crm_lead
+WHERE event_name ILIKE '%india fashion forum%' AND event_name ILIKE '%2024%'
+LIMIT 10;
+
+3️⃣ Show speakers named Muskaan
+SELECT * FROM tb_zoho_crm_lead
+WHERE full_name ILIKE '%muskaan%' AND participant_profile ILIKE '%speaker%'
+LIMIT 10;
+
+4️⃣ List all unique event names
+SELECT DISTINCT event_name FROM tb_zoho_crm_lead LIMIT 20;
+
+
+5️⃣ Show speakers for PRC India 2025
+
+SELECT * FROM tb_zoho_crm_lead
+WHERE event_name ILIKE '%prc%' AND event_name ILIKE '%2025%' AND participant_profile ILIKE '%speaker%'
+LIMIT 10;
+
+
+6️⃣ Show people from Waysahead Technology at PRC 2025
+
+SELECT * FROM tb_zoho_crm_lead
+WHERE organisation ILIKE '%waysahead%' AND event_name ILIKE '%prc%' AND event_name ILIKE '%2025%'
+LIMIT 10;
+
+
+7️⃣ Show speakers from India
+
+SELECT * FROM tb_zoho_crm_lead
+WHERE country ILIKE '%india%' AND participant_profile ILIKE '%speaker%'
+LIMIT 10;
+
+
+8️⃣ Show full details for Rupam Bhattacharjee
+SELECT * FROM tb_zoho_crm_lead
+WHERE full_name ILIKE '%rupam bhattacharjee%'
+LIMIT 10;
 
 SQL:
 """)
