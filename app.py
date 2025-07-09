@@ -146,89 +146,100 @@ def get_s3_url_by_filename(file_name: str) -> str:
 # ----------------- Tool Definitions ----------------
 # ✅ Production-grade tool with pg_trgm similarity & safe SQL
 
-import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, Field
-from langchain_core.tools import tool
-
-CRM_DB_CONN = {
-    "host": os.getenv("POSTGRES_HOST"),
-    "port": int(os.getenv("POSTGRES_PORT", "5432")),
-    "dbname": os.getenv("POSTGRES_STG_DB"),
-    "user": os.getenv("POSTGRES_STG_USER"),
-    "password": os.getenv("POSTGRES_STG_PASSWORD"),
-}
-
-class QueryZohoSQLArgs(BaseModel):
-    sql: str = Field(..., description="Raw SELECT SQL for tb_zoho_crm_lead only")
-    limit: int = Field(default=10)
-
-ALLOWED_COLUMNS = {
-    "id", "full_name", "designation", "organisation", "email", "secondary_email",
-    "event_name", "participant_profile", "vertical", "main_category",
-    "sub_category1", "sub_category2", "region", "country", "dbtimestamp"
-}
-
-@tool("query_zoho_leads_sql", args_schema=QueryZohoSQLArgs, return_direct=True)
-def query_zoho_leads(sql: str, limit: int = 10) -> str:
+@tool
+def query_zoho_leads(input_text: str) -> List[dict]:
     """
-    ✅ Runs safe SELECT-only SQL on tb_zoho_crm_lead
-    Enforces:
-    - SELECT only
-    - Allowed columns only
-    - No SELECT *
-    - LIMIT 100 max
+    🔍 Safe fuzzy match for Zoho CRM leads.
+    ✅ Checks all fields:
+        id, full_name, email, secondary_email,
+        organisation, designation, event_name,
+        participant_profile, vertical, main_category,
+        sub_category1, sub_category2, region, country, dbtimestamp.
+    ✅ Returns up to 10 formatted results.
     """
-    raw_sql = sql.strip().rstrip(";").replace("\n", " ").replace("\t", " ")
-    lower_sql = raw_sql.lower()
+    # ✅ Split input safely
+    keywords = [
+        re.sub(r"[^\w\s]", "", k.strip().lower())
+        for k in input_text.split()
+        if len(k.strip()) > 1
+    ]
 
-    if not lower_sql.startswith("select"):
-        return "<div><p>❌ Only raw SELECT allowed. Please retry with valid SQL.</p></div>"
+    if not keywords:
+        return [{"response": "Please provide more details for the search."}]
 
-    # Extract what’s between SELECT and FROM
-    pattern = r"select\s+(.*?)\s+from"
-    match = re.search(pattern, lower_sql, re.IGNORECASE)
-    if not match:
-        return "<div><p>❌ Couldn’t find columns before FROM. Please check your SQL.</p></div>"
+    fields = [
+        "id", "full_name", "email", "secondary_email",
+        "organisation", "designation", "event_name",
+        "participant_profile", "vertical", "main_category",
+        "sub_category1", "sub_category2", "region", "country"
+    ]
 
-    cols_part = match.group(1).strip()
-    if not cols_part:
-        return "<div><p>❌ No columns specified. List them explicitly.</p></div>"
+    where_clauses = []
+    params = []
+    for k in keywords:
+        for f in fields:
+            where_clauses.append(f"LOWER({f}) LIKE %s")
+            params.append(f"%{k}%")
 
-    cols = [c.strip().split()[-1].replace(",", "") for c in cols_part.split(",")]
+    where_sql = " OR ".join(where_clauses)
 
-    if "*" in cols:
-        return "<div><p>❌ `SELECT *` is not allowed. List valid columns.</p></div>"
+    sql = f"""
+        SELECT
+            id, full_name, email, secondary_email,
+            organisation, designation, event_name,
+            participant_profile, vertical, main_category,
+            sub_category1, sub_category2, region, country, dbtimestamp
+        FROM tb_zoho_crm_lead
+        WHERE {where_sql}
+        LIMIT 10;
+    """
 
-    invalid = [col for col in cols if col not in ALLOWED_COLUMNS]
-    if invalid:
-        return f"<div><p>❌ Invalid columns: {', '.join(invalid)}. Allowed: {', '.join(sorted(ALLOWED_COLUMNS))}</p></div>"
-
-    # Add LIMIT only if not present
-    if "limit" not in lower_sql:
-        raw_sql += f" LIMIT {min(limit, 100)}"
-
-    print(f"📌 Final SQL: {raw_sql}")
+    logging.info(f"📌 Running SQL: {sql} | Params: {params}")
 
     try:
-        conn = connect(**CRM_DB_CONN)
+        conn = connect(
+            host=os.getenv("POSTGRES_HOST"),
+            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            dbname=os.getenv("POSTGRES_STG_DB"),
+            user=os.getenv("POSTGRES_STG_USER"),
+            password=os.getenv("POSTGRES_STG_PASSWORD")
+        )
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(raw_sql)
+        cur.execute(sql, params)
         rows = cur.fetchall()
         cur.close()
         conn.close()
+
+        if not rows:
+            return [{"response": "✅ No matching participants found."}]
+
+        results = []
+        for row in rows:
+            parts = [
+                f"ID: {row['id']}",
+                f"Name: {row['full_name']}",
+                f"Designation: {row['designation']}",
+                f"Org: {row['organisation']}",
+                f"Event: {row['event_name']}",
+                f"Profile: {row['participant_profile']}",
+                f"Vertical: {row['vertical']}",
+                f"Category: {row['main_category']}",
+                f"SubCat1: {row['sub_category1']}",
+                f"SubCat2: {row['sub_category2']}",
+                f"Region: {row['region']}",
+                f"Country: {row['country']}",
+                f"Email: {row['email'] or 'N/A'}",
+                f"Secondary Email: {row['secondary_email'] or 'N/A'}",
+                f"Timestamp: {row['dbtimestamp']}"
+            ]
+            response = " | ".join(parts)
+            results.append({"response": response})
+
+        return results
+
     except Exception as e:
-        return f"<div><p>❌ SQL execution failed: {e}</p></div>"
-
-    if not rows:
-        return "<div><p>✅ Query ran but no rows matched.</p></div>"
-
-    html_rows = []
-    for idx, row in enumerate(rows, 1):
-        html_rows.append(f"{idx}. " + " | ".join(f"{k}: {v}" for k, v in row.items()))
-
-    return "<div><p>" + "<br>".join(html_rows) + "</p></div>"
+        logging.error(f"❌ Zoho leads query failed: {e}")
+        return [{"response": "❌ Query failed due to an internal error."}]
 
 @tool
 def retrieve_documents(input: str) -> str:
