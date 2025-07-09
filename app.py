@@ -200,38 +200,48 @@ sql_db = SQLDatabase.from_uri(
     custom_table_info=ZOHO_CRM_TABLE_INFO
 )
 
-# LLM (OpenAI or Claude, match your setup)
-sql_llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-
-# Toolkit
-sql_toolkit = SQLDatabaseToolkit(db=sql_db, llm=sql_llm)
-
-# SQL Agent
-sql_agent = create_sql_agent(
-    llm=sql_llm,
-    toolkit=sql_toolkit,
-    verbose=True
+# ---------------------------------------
+# ✅ LLM with pinned system prompt
+# ---------------------------------------
+llm = ChatOpenAI(
+    model="gpt-3.5-turbo",
+    temperature=0
 )
 
-# -------------------------------
-# ✅ 3️⃣ Final @tool
-# -------------------------------
+# ✅ SQL Agent: force explicit system instruction
+sql_toolkit = SQLDatabaseToolkit(db=sql_db, llm=llm)
 
+sql_agent = create_sql_agent(
+    llm=llm,
+    toolkit=sql_toolkit,
+    verbose=True,
+    agent_type="zero-shot-react-description",
+    system_message="""
+You are a Postgres SQL expert for CRM data.
+
+✅ Always:
+- Use SELECT only.
+- Use LOWER() + LIKE for fuzzy matching on text columns like full_name, organisation, event_name.
+- Never use '=' for text fields — only use '=' for exact numeric or ID matches.
+- Always add LIMIT 10.
+- Example: SELECT * FROM tb_zoho_crm_lead WHERE LOWER(full_name) LIKE '%rupam%' LIMIT 10;
+
+✅ Never:
+- Never do DELETE, DROP, INSERT or UPDATE.
+- Never guess table names — use only tb_zoho_crm_lead.
+"""
+)
+
+# ---------------------------------------
+# ✅ The final @tool version
+# ---------------------------------------
 @tool
 def query_zoho_leads(question: str) -> str:
     """
-    🧠 Dynamic NL ➜ SQL ➜ CRM Leads Tool.
-
-    Uses LangChain's SQLDatabase agent to generate SQL for `tb_zoho_crm_lead`
-    dynamically from natural language.
-
-    Example input:
-        "Show me all leads from India who attended PRC 2024."
-
-    Returns: rows matching the generated SELECT query.
+    🧠 Dynamic Zoho CRM SQL Tool.
+    Uses a pinned prompt to force safe fuzzy SELECT queries.
     """
     return sql_agent.run(question)
-
 
 @tool
 def retrieve_documents(input: str) -> str:
