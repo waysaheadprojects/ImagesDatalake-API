@@ -401,7 +401,7 @@ import logging
 from tempfile import TemporaryDirectory
 from typing import List
 from langchain_core.tools import tool
-
+import subprocess
 # ✅ Patch PATH so Whisper finds ffmpeg
 if "/usr/bin" not in os.environ["PATH"]:
     os.environ["PATH"] += ":/usr/bin"
