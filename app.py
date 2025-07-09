@@ -1296,9 +1296,12 @@ async def get_image_full(image_key: str = Query(...)):
 from langchain_core.runnables import RunnableLambda
 from langgraph.prebuilt import tools_condition
 
-def route_tool(state: dict):
+def route_tool(state: dict) -> dict:
     question = state["messages"][-1].content
+
     router_prompt = """
+    Pick only one tool name.
+
     Tools:
     - query_zoho_leads
     - retrieve_documents
@@ -1306,13 +1309,20 @@ def route_tool(state: dict):
     - detect_people_and_images
     - get_attendee_images
 
-    Pick only one. Just output the tool name.
+    When:
+    - Leads, names, event attendees ➜ query_zoho_leads
+    - Quotes, news, opinions ➜ retrieve_documents
+    - Videos ➜ fetch_youtube_videos
+    - Image detection ➜ detect_people_and_images
+    - Get event attendee images ➜ get_attendee_images
+
+    Output ONLY the tool name, nothing else.
     """
 
     response = llm.invoke([
         {"role": "system", "content": router_prompt},
         {"role": "user", "content": question}
-    ]).content.strip()
+    ]).strip()
 
     return {"next": response}
 
