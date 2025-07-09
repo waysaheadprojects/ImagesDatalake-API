@@ -394,31 +394,72 @@ def retrieve_documents(input: str) -> str:
     )
     return qa.run(input)
     
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Fetch relevant YouTube videos from 'India Retailing'.
-
-    Args:
-        input (str): Topic to search for.
-
-    Returns:
-        List[dict]: Video titles and URLs.
+    📺 Improved YouTube tool:
+    - Searches videos
+    - Gets transcripts if available
+    - Uses LLM to generate a summary
+    - Always includes a summary, fallback if needed.
     """
-    try:
-        from googleapiclient.discovery import build
-        yt = build("youtube", "v3", developerKey=os.getenv("YOUTUBE_API_KEY"))
-        results = yt.search().list(
-            q=input, type="video", part="snippet", maxResults=5,
-            channelId="UC8vvbk837aQ6kwxflCVMp1Q"
-        ).execute()
-        return [{
-            "title": i["snippet"]["title"],
-            "video_url": f"https://www.youtube.com/watch?v={i['id']['videoId']}"
-        } for i in results.get("items", [])]
-    except Exception as e:
-        logging.error(f"YT API error: {e}")
-        return []
+    from googleapiclient.discovery import build
+
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    if not api_key:
+        return [{"error": "Missing YOUTUBE_API_KEY"}]
+
+    yt = build("youtube", "v3", developerKey=api_key)
+    results = yt.search().list(
+        q=input, type="video", part="snippet", maxResults=3,
+        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # Your channel ID
+    ).execute()
+
+    videos = []
+
+    for item in results.get("items", []):
+        video_id = item["id"]["videoId"]
+        title = item["snippet"]["title"]
+        url = f"https://www.youtube.com/watch?v={video_id}"
+
+        # ✅ Attempt to get transcript
+        transcript_text = None
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+            transcript_text = " ".join([entry['text'] for entry in transcript_list])
+        except (TranscriptsDisabled, NoTranscriptFound):
+            transcript_text = None
+
+        # ✅ Build prompt for summary
+        if transcript_text:
+            prompt = f"""
+            Below is a YouTube video transcript.
+
+            ---
+            {transcript_text[:5000]}
+            ---
+
+            Please write a short, clear, factual summary of what this video is about.
+            """
+        else:
+            prompt = """
+            There is no transcript for this video. 
+            Please write a very short, reasonable guess summary based only on its title:
+            "{title}"
+            """
+
+        summary = llm.invoke([{"role": "user", "content": prompt}]).strip()
+
+        videos.append({
+            "title": title,
+            "video_url": url,
+            "summary": summary
+        })
+
+    return videos
+
         
 @tool
 def detect_people_and_images(input: str) -> list:
