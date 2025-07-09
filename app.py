@@ -204,7 +204,7 @@ sql_db = SQLDatabase.from_uri(
 # ✅ LLM with pinned system prompt
 # ---------------------------------------
 llm = ChatOpenAI(
-    model="gpt-3.5-turbo",
+    model="gpt-4.1-nano",
     temperature=0
 )
 
