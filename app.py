@@ -404,6 +404,11 @@ from langchain_core.tools import tool
 
 # ✅ Load Whisper ONCE
 whisper_model = whisper.load_model("base")  # Or "small", "medium" for more accuracy
+import os
+import subprocess
+
+print("✅ Effective PATH:", os.environ.get("PATH"))
+print("✅ Can run ffmpeg version:\n", subprocess.getoutput("ffmpeg -version"))
 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
