@@ -630,10 +630,10 @@ class State(TypedDict):
 def chatbot(state: State):
     # ⏹️ If last message is TOOL_NO_RESULT, stop & return that
     last_msg = state["messages"][-1].content  # ✅ Fix: dot access
-    if last_msg.startswith("<TOOL_NO_RESULT>"):
-        clean = last_msg[len("<TOOL_NO_RESULT>"):]
-        logging.info("🔒 Blocking fallback. Returning tool result only.")
-        return {"messages": [clean]}
+    if "<TOOL_NO_RESULT>" in last_msg:
+        clean = last_msg.split("<TOOL_NO_RESULT>", 1)[1]
+        logging.info("✅ Tool fallback detected — blocking extra LLM output.")
+        return {"messages": [{"role": "assistant", "content": clean}]}
 
     # ✅ Otherwise add system instruction once
     if len(state["messages"]) == 1:
