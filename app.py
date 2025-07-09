@@ -157,13 +157,13 @@ from langchain_core.tools import tool
 # -------------------------------
 
 # Encode special characters in password safely!
-password = quote_plus(os.getenv("POSTGRES_PASSWORD"))
+password = quote_plus(os.getenv("POSTGRES_STG_PASSWORD"))
 
 SQL_DB_URI = (
     f"postgresql+psycopg2://"
-    f"{os.getenv('POSTGRES_USER')}:{password}@"
+    f"{os.getenv('POSTGRES_STG_USER')}:{password}@"
     f"{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT', '5432')}/"
-    f"{os.getenv('POSTGRES_DB')}"
+    f"{os.getenv('POSTGRES_STG_DB')}"
 )
 
 # Example:
