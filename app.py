@@ -403,21 +403,20 @@ from typing import List
 from langchain_core.tools import tool
 import subprocess
 # ✅ Patch PATH so Whisper finds ffmpeg
-# ✅ Patch PATH so Whisper finds ffmpeg
 if "/usr/bin" not in os.environ["PATH"]:
     os.environ["PATH"] += ":/usr/bin"
 print("✅ Runtime PATH:", os.environ["PATH"])
 print("✅ ffmpeg version:", subprocess.getoutput("ffmpeg -version"))
 
-# ✅ Load Whisper ONCE
-whisper_model = whisper.load_model("base")  # or 'small', 'medium', 'large' for more accuracy
+# ✅ Load Whisper ONCE — use base/medium/large as you prefer
+whisper_model = whisper.load_model("base")
 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Whisper-only tool with WAV fix.
+    📺 Whisper tool:
     - Searches YOUR channel for videos about `input`
-    - Downloads audio as WAV with yt-dlp
+    - Downloads audio as WAV with yt-dlp (safe output, no double suffix)
     - Transcribes with Whisper
     - Returns: [{title, video_url, summary}]
     """
@@ -433,7 +432,7 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         type="video",
         part="snippet",
         maxResults=2,
-        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # ✅ YOUR channel ID
+        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # ✅ Your channel ID locked in
     ).execute()
 
     videos = []
@@ -447,18 +446,18 @@ def fetch_youtube_videos(input: str) -> List[dict]:
 
         try:
             with TemporaryDirectory() as tmpdir:
-                # ✅ Force WAV output to guarantee clean decode
-                audio_path = os.path.join(tmpdir, f"{video_id}.wav")
+                # ✅ ⚡️ DO NOT PUT EXTENSION!
+                audio_stem = os.path.join(tmpdir, f"{video_id}")
 
-                ffmpeg_path = "/usr/bin"  # confirm with which ffmpeg
+                ffmpeg_path = "/usr/bin"
 
                 ydl_opts = {
                     'format': 'bestaudio/best',
-                    'outtmpl': audio_path,      # 👈 final output is .wav
+                    'outtmpl': audio_stem,   # 👈 NO extension!
                     'ffmpeg_location': ffmpeg_path,
                     'postprocessors': [{
                         'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'wav',  # 👈 match extension!
+                        'preferredcodec': 'wav',  # 👈 output will be .wav
                     }],
                 }
 
@@ -466,10 +465,13 @@ def fetch_youtube_videos(input: str) -> List[dict]:
                     logging.info(f"🔊 Downloading audio for {video_id} as WAV with explicit ffmpeg")
                     ydl.download([url])
 
-                # ✅ Whisper handles raw WAV flawlessly
-                result = whisper_model.transcribe(audio_path)
+                # ✅ After postprocess, actual file is: stem + '.wav'
+                final_wav = audio_stem + ".wav"
+                logging.info(f"✅ Transcribing {final_wav}")
+
+                result = whisper_model.transcribe(final_wav)
                 transcript_text = result["text"]
-                logging.info(f"✅ Whisper transcribed {video_id}")
+                logging.info(f"✅ Whisper finished for {video_id}")
 
         except Exception as e:
             logging.warning(f"⚠️ Whisper failed for {video_id}: {e}")
@@ -487,9 +489,6 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         })
 
     return videos
-
-    return videos
-
         
 @tool
 def detect_people_and_images(input: str) -> list:
