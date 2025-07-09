@@ -1297,8 +1297,7 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.prebuilt import tools_condition
 
 def route_tool(state: dict):
-    question = state["messages"][-1]["content"]
-
+    question = state["messages"][-1].content
     router_prompt = """
     Tools:
     - query_zoho_leads
