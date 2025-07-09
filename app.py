@@ -604,7 +604,7 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
 # Define your tools
-tools = [query_zoho_leads, retrieve_documents, fetch_youtube_videos, get_attendee_images]
+llm_with_tools = [query_zoho_leads, retrieve_documents, fetch_youtube_videos, get_attendee_images]
 
 # 2️⃣ Initialize Ollama — NO bind_tools
 llm = Ollama(
@@ -635,7 +635,7 @@ def chatbot(state: State):
 graph_builder = StateGraph(State)
 
 graph_builder.add_node("chatbot", chatbot)
-graph_builder.add_node("tools", ToolNode(tools=tools))
+graph_builder.add_node("tools", ToolNode(tools=llm_with_tools))
 graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 graph_builder.add_edge(START, "chatbot")
