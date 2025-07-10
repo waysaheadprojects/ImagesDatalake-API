@@ -412,7 +412,6 @@ Your task:
 ✅ Be precise, factual, actionable.
 ✅ Do not wrap the entire response in extra disclaimers.
     """
-
     qa_prompt = PromptTemplate(
         input_variables=["context", "question"],
         template="""
@@ -429,14 +428,15 @@ User question: {question}
     )
 
     qa = RetrievalQA.from_chain_type(
-        llm=ChatOpenAI(model="gpt-4o", temperature=0),
-        chain_type="map_reduce",
+        llm=ChatOpenAI(model="gpt-4.1-nano", temperature=0),
+        chain_type="stuff",
         retriever=vector_store.as_retriever(search_kwargs={"k": 100}),
-        chain_type_kwargs={"prompt": qa_prompt.partial(system_instruction=system_instruction)},
+        chain_type_kwargs={"prompt": qa_prompt.partial(system_instruction=system)},
         return_source_documents=False,
     )
 
     return qa.run(input)
+
     
 
 @tool
