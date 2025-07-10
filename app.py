@@ -691,8 +691,7 @@ logging.basicConfig(level=logging.INFO)
 def logging_tool_node(tools):
     def wrapped(state: State):
         result = ToolNode(tools=tools).invoke(state)
-        content = result["messages"][-1]["content"]
-
+        content = result["messages"][-1].content
         state.setdefault("tools_used", [])
 
         if "SELECT" in content:
