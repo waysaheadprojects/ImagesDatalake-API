@@ -685,18 +685,36 @@ def chatbot(state: State):
     return {"messages": [llm_with_tools.invoke(state["messages"])]}
 
 
-# ✅ Build LangGraph with correct flow
+# ✅ Logging ToolNode wrapper
+def logging_tool_node(tools):
+    """Wrap ToolNode to record tools used"""
+    def wrapped(state: State):
+        result = ToolNode(tools=tools).invoke(state)
+        # Inspect last tool result to infer which tool(s)
+        content = result["messages"][-1]["content"]
+        state.setdefault("tools_used", [])
+        if "SELECT" in content:
+            state["tools_used"].append("query_zoho_leads")
+        if "<h3>" in content and "Trends" in content:
+            state["tools_used"].append("retrieve_documents")
+        if "youtube.com" in content:
+            state["tools_used"].append("fetch_youtube_videos")
+        if "image_key" in content:
+            state["tools_used"].append("detect_people_and_images")
+        logging.info(f"✅ Tools used in this round: {state['tools_used']}")
+        return result
+    return wrapped
+
+# ✅ Build LangGraph
 graph_builder = StateGraph(State)
 graph_builder.add_node("chatbot", chatbot)
-graph_builder.add_node("tools", ToolNode(tools=tools))
+graph_builder.add_node("tools", logging_tool_node(tools))
 graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 graph_builder.add_edge(START, "chatbot")
 
-# ✅ Safe checkpointing
 memory = MemorySaver()
 graph = graph_builder.compile(checkpointer=memory)
-
 
 # ----------------- FastAPI Endpoints -----------------
 
