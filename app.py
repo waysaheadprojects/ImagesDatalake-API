@@ -375,16 +375,25 @@ def query_zoho_leads(question: str) -> str:
 
     return "<div><p>✅ Tried multiple variations — no matching leads found.</p></div>"
 
-system_template = """
-You are a factual assistant. Answer the user’s question using ONLY the provided context.
-If the answer is not in the context, say “I could not find that in the available documents.”
-Never make up facts or names.
-Always provide a short, clear answer.
+@tool
+def retrieve_documents(input: str) -> str:
+    """
+    📄 Stronger Document QA Tool — analyzes deeply, clusters, cross-references.
+    """
+    system = """
+You are a smart event analyst. Using only the context below:
+1️⃣ Identify recurring speakers, companies, delegates across multiple years.
+2️⃣ Compare year-on-year changes if available.
+3️⃣ Cluster participants by sector or type.
+4️⃣ Extract key quotes if possible.
+5️⃣ Summarize with actionable suggestions.
+NEVER guess. If unsure, say you couldn’t find it.
+Always output in clear HTML: <div><h3>Key Trends</h3><ul>...</ul></div>
 """
 
-qa_prompt = PromptTemplate(
-    input_variables=["context", "question"],
-    template="""
+    qa_prompt = PromptTemplate(
+        input_variables=["context", "question"],
+        template="""
 {context}
 
 ---
@@ -395,41 +404,17 @@ User question: {question}
 
 {system_instruction}
 """
-)
-
-@tool
-def retrieve_documents(input: str) -> str:
-    """
-    📄 Improved Document QA Tool:
-    Uses a stricter prompt, sources, and clearer answers.
-    """
-    qa = RetrievalQA.from_chain_type(
-        llm=ChatOpenAI(model="gpt-4.1-nano", temperature=0.5),
-        chain_type="stuff",  # Good for short-medium chunks
-        retriever=vector_store.as_retriever(search_kwargs={"k": 10}),
-        return_source_documents=True,
-        chain_type_kwargs={
-            "prompt": qa_prompt.partial(system_instruction=system_template)
-        }
     )
 
-    result = qa(input)
+    qa = RetrievalQA.from_chain_type(
+        llm=ChatOpenAI(model="gpt-4.1-nano", temperature=0),
+        chain_type="stuff",
+        retriever=vector_store.as_retriever(search_kwargs={"k": 15}),
+        chain_type_kwargs={"prompt": qa_prompt.partial(system_instruction=system)},
+        return_source_documents=False,
+    )
 
-    # Format final output with sources if available
-    final_answer = result['result']
-    sources = []
-
-    if "source_documents" in result:
-        for doc in result["source_documents"]:
-            source_name = doc.metadata.get("file_name") or doc.metadata.get("source", "Unknown")
-            page = doc.metadata.get("page", "N/A")
-            sources.append(f"{source_name} (page {page})")
-
-    if sources:
-        sources_list = "\n".join(f"- {s}" for s in set(sources))
-        final_answer += f"\n\n<b>Sources:</b>\n{sources_list}"
-
-    return f"<div><p>{final_answer}</p></div>"
+    return qa.run(input)
     
 
 @tool
