@@ -378,18 +378,40 @@ def query_zoho_leads(question: str) -> str:
 @tool
 def retrieve_documents(input: str) -> str:
     """
-    📄 Stronger Document QA Tool — analyzes deeply, clusters, cross-references.
+    📄 Universal Event Magazine Analyzer.
+    Works for ANY Images Group event: IFF, IRF, PRC, D2C, etc.
+    Pulls multi-year, multi-source context, clusters and outputs a strategic plan.
     """
-    system = """
-You are a smart event analyst. Using only the context below:
-1️⃣ Identify recurring speakers, companies, delegates across multiple years.
-2️⃣ Compare year-on-year changes if available.
-3️⃣ Cluster participants by sector or type.
-4️⃣ Extract key quotes if possible.
-5️⃣ Summarize with actionable suggestions.
-NEVER guess. If unsure, say you couldn’t find it.
-Always output in clear HTML: <div><h3>Key Trends</h3><ul>...</ul></div>
-"""
+
+    system_instruction = """
+You are a senior research analyst for Images Group.
+
+Your task:
+✅ Analyze ALL available magazines, reports, articles related to the event in question.
+✅ Extract:
+ - Recurring speakers, companies, delegates.
+ - New speakers, brands, sectors, trends.
+ - Exact quotes if found (cite source if possible).
+ - Year-on-year trends and insights.
+ - Gaps: under-covered sectors, missing stakeholder types.
+ - Clear action plan for the next edition of the event.
+
+✅ Final output must:
+ - Be minimum 500–1000 words if data allows.
+ - Be structured as:
+    1️⃣ <h3>Key Multi-Year Trends</h3>
+    2️⃣ <h3>Recurring & New Speakers & Brands</h3>
+    3️⃣ <h3>Notable Quotes</h3>
+    4️⃣ <h3>Topics & Themes</h3>
+    5️⃣ <h3>Gaps & Opportunities</h3>
+    6️⃣ <h3>Recommended Actions for Next Edition</h3>
+
+✅ Always return valid HTML: <div>, <h3>, <ul> — no Markdown.
+✅ If any section lacks data, say so politely inside the HTML.
+✅ Never guess or invent data.
+✅ Be precise, factual, actionable.
+✅ Do not wrap the entire response in extra disclaimers.
+    """
 
     qa_prompt = PromptTemplate(
         input_variables=["context", "question"],
@@ -407,10 +429,10 @@ User question: {question}
     )
 
     qa = RetrievalQA.from_chain_type(
-        llm=ChatOpenAI(model="gpt-4.1-nano", temperature=0),
-        chain_type="stuff",
-        retriever=vector_store.as_retriever(search_kwargs={"k": 50}),
-        chain_type_kwargs={"prompt": qa_prompt.partial(system_instruction=system)},
+        llm=ChatOpenAI(model="gpt-4o", temperature=0),
+        chain_type="map_reduce",
+        retriever=vector_store.as_retriever(search_kwargs={"k": 100}),
+        chain_type_kwargs={"prompt": qa_prompt.partial(system_instruction=system_instruction)},
         return_source_documents=False,
     )
 
