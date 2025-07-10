@@ -394,45 +394,30 @@ def retrieve_documents(input: str) -> str:
     )
     return qa.run(input)
     
-import yt_dlp
-import whisper
-import os
-import logging
-from tempfile import TemporaryDirectory
-from typing import List
-from langchain_core.tools import tool
-import subprocess
-# ✅ Patch PATH so Whisper finds ffmpeg
-if "/usr/bin" not in os.environ["PATH"]:
-    os.environ["PATH"] += ":/usr/bin"
-print("✅ Runtime PATH:", os.environ["PATH"])
-print("✅ ffmpeg version:", subprocess.getoutput("ffmpeg -version"))
-
-# ✅ Load Whisper ONCE — use base/medium/large as you prefer
-whisper_model = whisper.load_model("base")
 
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Whisper tool:
-    - Searches YOUR channel for videos about `input`
-    - Downloads audio as WAV with yt-dlp (safe output, no double suffix)
-    - Transcribes with Whisper
-    - Returns: [{title, video_url, summary}]
+    📺 Pure YouTube tool.
+    - Searches YOUR channel for videos matching `input`
+    - NO transcript.
+    - Returns: [{title, video_url}]
     """
     from googleapiclient.discovery import build
 
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
+        logging.error("❌ YOUTUBE_API_KEY is missing!")
         return [{"error": "Missing YOUTUBE_API_KEY"}]
 
     yt = build("youtube", "v3", developerKey=api_key)
+
     results = yt.search().list(
         q=input,
         type="video",
         part="snippet",
-        maxResults=2,
-        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # ✅ Your channel ID locked in
+        maxResults=5,
+        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # ✅ Your channel ID
     ).execute()
 
     videos = []
@@ -442,51 +427,9 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         title = item["snippet"]["title"]
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        transcript_text = None
-
-        try:
-            with TemporaryDirectory() as tmpdir:
-                # ✅ ⚡️ DO NOT PUT EXTENSION!
-                audio_stem = os.path.join(tmpdir, f"{video_id}")
-
-                ffmpeg_path = "/usr/bin"
-
-                ydl_opts = {
-                    'format': 'bestaudio/best',
-                    'outtmpl': audio_stem,   # 👈 NO extension!
-                    'ffmpeg_location': ffmpeg_path,
-                    'postprocessors': [{
-                        'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'wav',  # 👈 output will be .wav
-                    }],
-                }
-
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    logging.info(f"🔊 Downloading audio for {video_id} as WAV with explicit ffmpeg")
-                    ydl.download([url])
-
-                # ✅ After postprocess, actual file is: stem + '.wav'
-                final_wav = audio_stem + ".wav"
-                logging.info(f"✅ Transcribing {final_wav}")
-
-                result = whisper_model.transcribe(final_wav)
-                transcript_text = result["text"]
-                logging.info(f"✅ Whisper finished for {video_id}")
-
-        except Exception as e:
-            logging.warning(f"⚠️ Whisper failed for {video_id}: {e}")
-            transcript_text = None
-
-        if transcript_text:
-            summary = " ".join(transcript_text.split()[:50]) + "..."
-            
-        else:
-            summary = f"No transcript. Based on title: {title}"
-
         videos.append({
             "title": title,
-            "video_url": url,
-            "summary": summary
+            "video_url": url
         })
 
     return videos
