@@ -914,7 +914,7 @@ async def get_sources(payload: SourceRequest, current_user: dict = Depends(get_c
         )
 
         # 2️⃣ Stricter similarity filter
-        threshold = 0.68  # 👈 stricter: 80%+ cosine similarity
+        threshold = 0.70  # 👈 stricter: 80%+ cosine similarity
         filtered = [
             (doc, score) for doc, score in docs_and_scores if score >= threshold
         ]
