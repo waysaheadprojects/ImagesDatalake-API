@@ -398,10 +398,10 @@ def retrieve_documents(input: str) -> str:
 @tool
 def fetch_youtube_videos(input: str) -> List[dict]:
     """
-    📺 Pure YouTube tool.
+    📺 Pure YouTube tool (no transcripts)
     - Searches YOUR channel for videos matching `input`
-    - NO transcript.
-    - Returns: [{title, video_url}]
+    - Sorted by relevance
+    - Returns up to 20 videos: [{title, video_url}]
     """
     from googleapiclient.discovery import build
 
@@ -416,8 +416,9 @@ def fetch_youtube_videos(input: str) -> List[dict]:
         q=input,
         type="video",
         part="snippet",
-        maxResults=5,
-        channelId="UC8vvbk837aQ6kwxflCVMp1Q"  # ✅ Your channel ID
+        maxResults=20,                 # ✅ Up to 20 videos
+        channelId="UC8vvbk837aQ6kwxflCVMp1Q",  # ✅ Your channel ID
+        order="relevance"              # ✅ Sort by relevance
     ).execute()
 
     videos = []
