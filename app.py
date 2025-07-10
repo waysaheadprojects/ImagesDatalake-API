@@ -25,7 +25,8 @@ from auth import create_access_token, verify_token
 from datetime import timedelta
 from fastapi import Depends, HTTPException
 from fastapi import Query
-
+from langchain.chains import RetrievalQA
+from langchain.prompts import PromptTemplate
 
 # ----------------- FastAPI Init -----------------
 app = FastAPI()
@@ -374,25 +375,61 @@ def query_zoho_leads(question: str) -> str:
 
     return "<div><p>✅ Tried multiple variations — no matching leads found.</p></div>"
 
+system_template = """
+You are a factual assistant. Answer the user’s question using ONLY the provided context.
+If the answer is not in the context, say “I could not find that in the available documents.”
+Never make up facts or names.
+Always provide a short, clear answer.
+"""
+
+qa_prompt = PromptTemplate(
+    input_variables=["context", "question"],
+    template="""
+{context}
+
+---
+
+User question: {question}
+
+---
+
+{system_instruction}
+"""
+)
+
 @tool
 def retrieve_documents(input: str) -> str:
     """
-    📄 Document QA Tool: Use this tool when the user is asking for information that would
-    appear in magazine articles, reports, or documents (e.g., quotes, statements, opinions).
-
-    Examples:
-    - "What did Kishore Biyani say about the future of retail?"
-    - "Summarize the latest article about D2C brands."
-    -who is amitabh taneja?
-    - "What are the key insights from the latest India Retailing magazine?"
-    Returns: A relevant textual answer based on document similarity search.
+    📄 Improved Document QA Tool:
+    Uses a stricter prompt, sources, and clearer answers.
     """
     qa = RetrievalQA.from_chain_type(
-        llm=ChatOpenAI(model="gpt-3.5-turbo", temperature=0),
+        llm=ChatOpenAI(model="gpt-4.1-nano", temperature=0.5),
+        chain_type="stuff",  # Good for short-medium chunks
         retriever=vector_store.as_retriever(search_kwargs={"k": 10}),
-        return_source_documents=False
+        return_source_documents=True,
+        chain_type_kwargs={
+            "prompt": qa_prompt.partial(system_instruction=system_template)
+        }
     )
-    return qa.run(input)
+
+    result = qa(input)
+
+    # Format final output with sources if available
+    final_answer = result['result']
+    sources = []
+
+    if "source_documents" in result:
+        for doc in result["source_documents"]:
+            source_name = doc.metadata.get("file_name") or doc.metadata.get("source", "Unknown")
+            page = doc.metadata.get("page", "N/A")
+            sources.append(f"{source_name} (page {page})")
+
+    if sources:
+        sources_list = "\n".join(f"- {s}" for s in set(sources))
+        final_answer += f"\n\n<b>Sources:</b>\n{sources_list}"
+
+    return f"<div><p>{final_answer}</p></div>"
     
 
 @tool
