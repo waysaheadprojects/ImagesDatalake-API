@@ -685,25 +685,34 @@ def chatbot(state: State):
     return {"messages": [llm_with_tools.invoke(state["messages"])]}
 
 
-# ✅ Logging ToolNode wrapper
+import logging
+logging.basicConfig(level=logging.INFO)
+
 def logging_tool_node(tools):
-    """Wrap ToolNode to record tools used"""
     def wrapped(state: State):
         result = ToolNode(tools=tools).invoke(state)
-        # Inspect last tool result to infer which tool(s)
         content = result["messages"][-1]["content"]
+
         state.setdefault("tools_used", [])
+
         if "SELECT" in content:
-            state["tools_used"].append("query_zoho_leads")
+            if "query_zoho_leads" not in state["tools_used"]:
+                state["tools_used"].append("query_zoho_leads")
         if "<h3>" in content and "Trends" in content:
-            state["tools_used"].append("retrieve_documents")
+            if "retrieve_documents" not in state["tools_used"]:
+                state["tools_used"].append("retrieve_documents")
         if "youtube.com" in content:
-            state["tools_used"].append("fetch_youtube_videos")
+            if "fetch_youtube_videos" not in state["tools_used"]:
+                state["tools_used"].append("fetch_youtube_videos")
         if "image_key" in content:
-            state["tools_used"].append("detect_people_and_images")
-        logging.info(f"✅ Tools used in this round: {state['tools_used']}")
+            if "detect_people_and_images" not in state["tools_used"]:
+                state["tools_used"].append("detect_people_and_images")
+
+        logging.info(f"✅ Tools used this round: {state['tools_used']}")
         return result
+
     return wrapped
+
 
 # ✅ Build LangGraph
 graph_builder = StateGraph(State)
