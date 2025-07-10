@@ -408,7 +408,7 @@ User question: {question}
     qa = RetrievalQA.from_chain_type(
         llm=ChatOpenAI(model="gpt-4.1-nano", temperature=0),
         chain_type="stuff",
-        retriever=vector_store.as_retriever(search_kwargs={"k": 80}),
+        retriever=vector_store.as_retriever(search_kwargs={"k": 65}),
         chain_type_kwargs={"prompt": qa_prompt.partial(system_instruction=system)},
         return_source_documents=False,
     )
