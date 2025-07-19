@@ -75,14 +75,13 @@ const LoginComponent = ({
             </strong>
           </h2>
           <p data-start="1497" data-end="1610">
-            Insight-driven visual discovery with access controls
-            tailored to organizational roles.
+           Search and access complete event photo collections for any name with AI-driven image discovery.
           </p>
           <br />
           <h2 data-start="1965" data-end="2001">
             🔄{" "}
             <strong data-start="1971" data-end="1999">
-              Release 3 &ndash; 15 July 2025
+              Release 3 &ndash; 31 July 2025
             </strong>
           </h2>
           <p data-start="2049" data-end="2179">

@@ -1,8 +1,8 @@
+import React, { useRef } from "react";
 import { BoltIcon } from "@heroicons/react/24/outline";
 import { useNavigate } from "react-router-dom";
 import { encrypt } from "../services/encrytion-decryption";
 
-// Reusable Menu Section
 const MenuSection = ({ title, items }) => (
   <>
     <h2 className="text-base font-semibold mb-4">{title}</h2>
@@ -21,29 +21,54 @@ const MenuSection = ({ title, items }) => (
   </>
 );
 
-const SidebarHoverPanel = ({ title, sections, historyList, navigate }) => {
+const SidebarTogglePanel = ({ title, sections, historyList, navigate, onClose }) => {
+  const timeoutRef = useRef(null);
+
+  const handleMouseLeave = () => {
+    // Set a delay of 2 seconds before calling onClose
+    timeoutRef.current = setTimeout(() => {
+      onClose();
+    }, 2000);
+  };
+
+  const handleMouseEnter = () => {
+    // Clear the timeout if the user moves the mouse back in
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  };
 
   const handleHistoryClick = (session_id) => {
     const encryptedSessionId = encrypt(session_id);
     const urlSafeSessionId = encodeURIComponent(encryptedSessionId);
     navigate(`/images-ai/result?s=${urlSafeSessionId}`);
   };
+
   return (
-    <div className="fixed top-0 left-[4%] min-h-screen w-56 hidden bg-zinc-100 group-hover:flex flex-col p-4 z-50">
+      <div className="fixed top-0 left-[4%] min-h-screen w-56 bg-zinc-100 p-4 z-50 "onMouseLeave={onClose}
+      >
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="font-semibold text-lg">{title}</h3>
+        <button onClick={onClose} className="text-sm text-gray-500 hover:text-black">
+          ✕
+        </button>
+      </div>
+   
       {sections.map((section, idx) => (
         <div key={idx}>
           <MenuSection title={section.title} items={section.items} />
           {idx < sections.length - 1 && <hr className="my-4" />}
         </div>
       ))}
+
       {historyList?.length > 0 && (
         <>
           <hr className="my-4" />
           <span className="text-xs text-gray-500 mb-2">History</span>
           <div className="max-h-96 overflow-x-hidden overflow-y-auto">
             <ul className="space-y-2 text-sm">
-              {historyList?.map((item, index) => {
-                // Truncate to 20 characters
+              {historyList.map((item, index) => {
                 const truncatedMessage =
                   item.last_message?.slice(0, 20) +
                   (item.last_message?.length > 20 ? "..." : "");
@@ -69,4 +94,4 @@ const SidebarHoverPanel = ({ title, sections, historyList, navigate }) => {
   );
 };
 
-export default SidebarHoverPanel;
+export default SidebarTogglePanel;

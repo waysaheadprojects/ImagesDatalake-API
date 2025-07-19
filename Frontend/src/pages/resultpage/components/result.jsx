@@ -13,22 +13,18 @@ import {
   LinkIcon,
 } from "@heroicons/react/24/outline";
 import renderAnswer from "./answerSection";
-import renderImages from "./imageSection";
+import RenderImages from "./imageSection";
 import renderVideos from "./videoSection";
 import renderSources from "./sourcesSection";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import ResultaPageInputBox from "./result_page_input_box";
 import { decrypt } from "../../../services/encrytion-decryption";
 import InsightsPanel from "./insightPanel";
-
-const websiteInsightStaging = [
-  { name: "Zoho CRM", completed: 6000, pending: 0, inProgress: 0 },
-  { name: "Mega Image", completed: 350, pending: 8, inProgress: 0 },
-  { name: "S3 PDF", completed: 109, pending: 0, inProgress: 0 },
-  { name: "NAS Drive", completed: 0, pending: 0, inProgress: 1 },
-  { name: "India DB", completed: 0, pending: 0, inProgress: 1 },
-  { name: "YouTube", completed: 2853, pending: 0, inProgress: 0 },
-];
+import Spinner from "../../../components/spinner";
+import StackedBarChart from "./insightChart";
+import BarRaceChart from "./insightRaceBarChart";
+import MediaBarChart from "./mediaBarChart";
+import DataStatusBarChart from "./mediaBarChart";
 
 const ResultComponent = () => {
   const { responseData, setResponseData } = useResponse();
@@ -39,11 +35,18 @@ const ResultComponent = () => {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("answer");
   const [history, setHistory] = useState([]);
+
+const [loadingImages, setLoadingImages] = useState(false);
+const [loadingVideos, setLoadingVideos] = useState(false);
+const [loadingSources, setLoadingSources] = useState(false);
+
+
  
   const [imageData, setImageData] = useState([]);
   const [videoData, setVideoData] = useState([]);
   const [sourceData, setSourceData] = useState([]);
   const [insightData, setInsightData] = useState([]);
+
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
  const location=useLocation()
@@ -71,12 +74,30 @@ const ResultComponent = () => {
     setHistory(response?.data);
    
    
-  };
+  }; 
+// const fetchExistingData = async () => {
+//   const sessionCreatedAt = parseInt(sessionStorage.getItem("sessionCreatedAt"), 10);
+//   const now = Date.now();
+
+//   if (sessionCreatedAt && now - sessionCreatedAt < 60000) {
+//     const delay = 60000 - (now - sessionCreatedAt);
+//     console.log(`Waiting ${delay}ms before fetching existing data...`);
+//     await new Promise((resolve) => setTimeout(resolve, delay));
+//   }
+
+//   const response = await POST_REQUEST(
+//     "https://images-api.retailopedia.com/get-chat-history-detail",
+//     { session_id: sessionId, user_key: userId.toString() }
+//   );
+
+//   console.log(response?.data);
+//   setHistory(response?.data);
+// };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-
+ setActiveTab("answer"); // 👈 Reset active tab to "answer" on each submission
     if (responseData && query) {
       setHistory((prev) => [...prev, { query, answer: typedAnswer }]);
     }
@@ -118,11 +139,53 @@ const ResultComponent = () => {
       answer,
     }).then(setInsightData);
   };
+const fetchImageData = async () => {
+  setLoadingImages(true);
+  const res = await POST_REQUEST("https://images-api.retailopedia.com/get_images", {
+    question: query,
+    answer: responseData.answer,
+  });
+  console.log(res,"Response")
+  setImageData(res);
+  setLoadingImages(false);
+};
 
-  useEffect(() => {
-    if (!query || !responseData?.answer) return;
-    fetchSupplementaryData(query, responseData.answer);
-  }, [query, responseData]);
+const fetchVideoData = async () => {
+  setLoadingVideos(true);
+  const res = await POST_REQUEST("https://images-api.retailopedia.com/get_videos", {
+    question: query,
+  });
+  setVideoData(res);
+  setLoadingVideos(false);
+};
+
+const fetchSourceData = async () => {
+  setLoadingSources(true);
+  const res = await POST_REQUEST("https://images-api.retailopedia.com/get_sources", {
+    question: query,
+  }); 
+  setSourceData(res);
+  setLoadingSources(false);
+};
+
+
+
+useEffect(() => {
+  if (!responseData?.answer || !query) return;
+
+  if (activeTab === "images" && imageData.length === 0) {
+    fetchImageData();
+  } else if (activeTab === "videos" && videoData.length === 0) {
+    fetchVideoData();
+  } else if (activeTab === "sources" && sourceData.length === 0) {
+    fetchSourceData();
+  } 
+}, [activeTab, responseData, query]);
+
+  // useEffect(() => {
+  //   if (!query || !responseData?.answer) return;
+  //   fetchSupplementaryData(query, responseData.answer);
+  // }, [query, responseData]);
 
   useEffect(() => {
     if (!responseData?.answer) return;
@@ -149,20 +212,33 @@ const ResultComponent = () => {
     fetchExistingData();
   }, [location.search]);
 
+
   const renderTabContent = () => {
-    switch (activeTab) {
-      case "answer":
-        return renderAnswer({ typedAnswer: typedAnswer });
-      case "images":
-        return renderImages({ imageData: imageData });
-      case "videos":
-        return renderVideos({ videoData: videoData });
-      case "sources":
-        return renderSources({ sourceData: sourceData });
-      default:
-        return null;
-    }
-  };
+  switch (activeTab) {
+    case "answer":
+      return renderAnswer({ typedAnswer });
+
+    case "images":
+      return loadingImages
+        ? <Spinner />
+        : <RenderImages imageData={imageData} />
+
+
+    case "videos":
+      return loadingVideos
+        ? <Spinner />
+        : renderVideos({ videoData });
+
+    case "sources":
+      return loadingSources
+        ? <Spinner />
+        : renderSources({ sourceData });
+
+    default:
+      return null;
+  }
+};
+
   useEffect(() => {
     if (!sessionId) {
       navigate("/images-ai");
@@ -253,30 +329,15 @@ const ResultComponent = () => {
       <div className="w-[30%] h-full p-4 overflow-y-auto">
         <h3 className="text-xl font-semibold mb-4">Insights</h3>
         <InsightsPanel/>
-        {/* <div style={{ width: "400px", height: 300 }}>
-          {" "}
-         
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={websiteInsightStaging}>
-              <XAxis
-                dataKey="name"
-                interval={0}
-                angle={-30}
-                textAnchor="end"
-                height={70}
-              />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="completed" fill="#4ade80" name="Completed" />
-              <Bar dataKey="pending" fill="#facc15" name="Pending" />
-              <Bar dataKey="inProgress" fill="#60a5fa" name="In Progress" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div> */}
+          {/* <BarRaceChart/> */}
+        {/* <StackedBarChart/> */}
+        {/* <MediaBarChart/> */}
+       
       </div>
     </div>
   );
 };
+
+
 
 export default ResultComponent;

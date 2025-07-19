@@ -10,15 +10,22 @@ import {
   PaintBrushIcon,
   TrophyIcon,
   FilmIcon,
+  rs,
+  Bars2Icon,
 } from "@heroicons/react/24/outline";
 import imageLogo from "../assets/images/imagecompressedLogo.png";
 import { Outlet, useNavigate } from "react-router-dom";
 import { GET_REQUEST } from "../api";
 import { useEffect, useState } from "react";
 import SidebarHoverPanel from "./Sidebar";
+import { Link } from "react-router-dom";
+import SidebarTogglePanel from "./SidebarTooglePanel";
 const SidebarLayout = () => {
   const [historyList, setHistoryList] = useState(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // <-- this is new
+const [isDicoverSidebarOpen,setIsDicoverSidebarOpen]=useState(false)
   const navigate = useNavigate();
+
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -27,10 +34,9 @@ const SidebarLayout = () => {
         "https://images-api.retailopedia.com/user-chats",
         { user_key: userId }
       );
-      console.log(response)
-      if(response.status===true){
-      setHistoryList(response.sessions);
-
+      console.log(response);
+      if (response.status === true) {
+        setHistoryList(response.sessions);
       }
     };
 
@@ -66,28 +72,34 @@ const SidebarLayout = () => {
 
   const discoverSections = [
     {
-      title: "Discover",
+      // title: "Discover",
       items: [
-        { label: "Top", Icon: BookmarkIcon },
-        { label: "Tech & Science", Icon: GlobeAltIcon },
-        { label: "Finance", Icon: BanknotesIcon },
-        { label: "Arts & Culture", Icon: PaintBrushIcon },
-        { label: "Sports", Icon: TrophyIcon },
-        { label: "Entertainment", Icon: FilmIcon },
+        { label: "Retail", Icon: BookmarkIcon },
+        { label: "Fashion", Icon: GlobeAltIcon },
+        { label: "Food", Icon: BanknotesIcon },
+        { label: "Shopping Center", Icon: PaintBrushIcon },
+        { label: "D2C", Icon: TrophyIcon },
       ],
     },
   ];
 
   return (
-    <div className="grid grid-cols-[4%_96%] min-h-screen bg-zinc-100 transition-[grid-template-columns] duration-300 ease-in-out overflow-hidden">
+    <div className="grid grid-cols-[4%_96%] min-h-screen bg-zinc-100 transition-[grid-template-columns] duration-300 ease-in-out overflow-visible">
       <div className="mt-4">
         <div className="m-2 flex flex-col justify-between items-center py-4 h-screen">
           <div className="flex flex-col items-center space-y-6">
-            <img src={imageLogo} alt="logo" className="w-12 h-12 mb-8" />
+            <Link to="/images-ai">
+              <img
+                src={imageLogo}
+                alt="logo"
+                className="w-12 h-12 mb-8 cursor-pointer"
+              />
+            </Link>
+            {/* <img src={imageLogo} alt="logo" className="w-12 h-12 mb-8" /> */}
 
             {/* Add Thread */}
             <div className="relative group flex flex-col items-center">
-              <button className="p-2 border mb-8 border-gray-300 hover:border-black text-gray-700 hover:text-black hover:bg-gray-300 rounded-full">
+              {/* <button className="p-2 border mb-8 border-gray-300 hover:border-black text-gray-700 hover:text-black hover:bg-gray-300 rounded-full">
                 <PlusIcon className="w-6 h-6" />
               </button>
               <SidebarHoverPanel
@@ -95,12 +107,30 @@ const SidebarLayout = () => {
                 sections={homeSections}
                 historyList={historyList}
                 navigate={navigate}
-              />
+              /> */}
+              <button
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                className="p-2 border border-gray-300 hover:border-black text-gray-700 hover:text-black hover:bg-gray-300 rounded-full"
+              >
+                <PlusIcon className="w-6 h-6" />
+              </button>
+              {/* <span className="text-xs text-gray-600">Menu</span> */}
+
+              {isSidebarOpen && (
+                <SidebarTogglePanel
+                  title="Create"
+                  sections={homeSections}
+                  historyList={historyList}
+                  navigate={navigate}
+                  onClose={() => setIsSidebarOpen(false)}
+                />
+              )}
             </div>
 
             {/* Home */}
-            <div className="relative group flex flex-col items-center">
-              <button className="p-2 border-gray-300 hover:border-black text-gray-700 hover:text-black hover:rounded-md hover:bg-gray-300">
+            {/* <div className="relative group flex flex-col items-center">
+              <button className="p-2 border-gray-300 hover:border-black text-gray-700 hover:text-black hover:rounded-md hover:bg-gray-300"
+                >
                 <HomeIcon className="w-6 h-6" />
               </button>
               <span className="text-xs text-gray-600">Home</span>
@@ -110,19 +140,41 @@ const SidebarLayout = () => {
                 historyList={historyList}
                 navigate={navigate}
               />
+            </div> */}
+            <div className="relative group flex flex-col items-center">
+              <button
+                className="p-2 border-gray-300 hover:border-black text-gray-700 hover:text-black hover:rounded-md hover:bg-gray-300"
+                onClick={() => navigate("/images-ai")}
+              >
+                <HomeIcon className="w-6 h-6" />
+              </button>
+              <span className="text-xs text-gray-600">Home</span>
             </div>
 
             {/* Discover */}
             <div className="relative group flex flex-col items-center">
-              <button className="p-2 border-gray-300 hover:border-black text-gray-700 hover:text-black hover:rounded-md hover:bg-gray-300">
+              {/* <button className="p-2 border-gray-300 hover:border-black text-gray-700 hover:text-black hover:rounded-md hover:bg-gray-300">
+                <GlobeAltIcon className="w-6 h-6" />
+              </button> */}
+              <button className="p-2 border-gray-300 hover:border-black text-gray-700 hover:text-black hover:rounded-md hover:bg-gray-300"
+              onClick={() => setIsDicoverSidebarOpen(!isDicoverSidebarOpen)}
+              >
                 <GlobeAltIcon className="w-6 h-6" />
               </button>
               <span className="text-xs text-gray-600">Discover</span>
-              <SidebarHoverPanel
+              {/* <SidebarHoverPanel
                 title="Discover"
                 sections={discoverSections}
                 navigate={navigate}
-              />
+              /> */}
+              {isDicoverSidebarOpen && (
+                <SidebarTogglePanel
+                  title="Discover"
+                  sections={discoverSections}
+                  navigate={navigate}
+                  onClose={() => {setIsSidebarOpen(false); setIsDicoverSidebarOpen(false)}}
+                />
+              )}
             </div>
           </div>
 

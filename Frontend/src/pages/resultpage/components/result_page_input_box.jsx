@@ -24,7 +24,7 @@ const ResultaPageInputBox = ({ loading, data, setData, handleSubmit }) => {
 
           <div className="flex-1 flex items-center px-4 ">
             <textarea
-              rows="1"
+              rows="3"
               value={data}
               placeholder="Ask anything..."
               onChange={(e) => setData(e.target.value)}
@@ -34,7 +34,7 @@ const ResultaPageInputBox = ({ loading, data, setData, handleSubmit }) => {
                   handleSubmit(e);
                 }
               }}
-              className="w-full resize-none border-none outline-none text-base bg-neutral-50 placeholder:text-neutral-700 leading-tight"
+              className="w-full resize-none border-none outline-none text-base bg-neutral-50 placeholder:text-neutral-700 placeholder:py-4 leading-tight"
             ></textarea>
           </div>
           {/* Right Icons */}
