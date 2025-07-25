@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse , HTMLResponse
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List , Dict
 import re, logging, base64
 from io import BytesIO
 from langchain_core.tools import tool
