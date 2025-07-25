@@ -432,6 +432,7 @@ def fetch_youtube_videos(input: str) -> Dict[str, List[Dict[str, str]]]:
             "external": [ {title, video_url} ]
         }
     """
+    from googleapiclient.discovery import build
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
         logging.error("❌ YOUTUBE_API_KEY is missing!")
