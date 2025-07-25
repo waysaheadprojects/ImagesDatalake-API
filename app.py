@@ -417,46 +417,82 @@ User question: {question}
 
 
     
-
 @tool
-def fetch_youtube_videos(input: str) -> List[dict]:
+def fetch_youtube_videos(input: str) -> Dict[str, List[Dict[str, str]]]:
     """
-    📺 Pure YouTube tool (no transcripts)
-    - Searches YOUR channel for videos matching `input`
-    - Sorted by relevance
-    - Returns up to 20 videos: [{title, video_url}]
-    """
-    from googleapiclient.discovery import build
+    📺 YouTube Video Search Tool
 
+    Searches:
+    - Internal: from 2 specified channels
+    - External: from global YouTube
+
+    Returns:
+        {
+            "internal": [ {title, video_url} ],
+            "external": [ {title, video_url} ]
+        }
+    """
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
         logging.error("❌ YOUTUBE_API_KEY is missing!")
-        return [{"error": "Missing YOUTUBE_API_KEY"}]
+        return {
+            "error": "Missing YOUTUBE_API_KEY",
+            "internal": [],
+            "external": []
+        }
 
     yt = build("youtube", "v3", developerKey=api_key)
 
-    results = yt.search().list(
+    # Your internal channel IDs
+    internal_channels = [
+        "UC8vvbk837aQ6kwxflCVMp1Q",
+        "UCqq_JvzKnaqeVp7Qqu8Vt5g"
+    ]
+
+    # Fetch internal videos from both channels
+    internal_videos = []
+    for channel_id in internal_channels:
+        results = yt.search().list(
+            q=input,
+            type="video",
+            part="snippet",
+            maxResults=10,
+            channelId=channel_id,
+            order="relevance"
+        ).execute()
+
+        for item in results.get("items", []):
+            video_id = item["id"]["videoId"]
+            title = item["snippet"]["title"]
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            internal_videos.append({
+                "title": title,
+                "video_url": url
+            })
+
+    # Fetch external videos from whole of YouTube
+    external_results = yt.search().list(
         q=input,
         type="video",
         part="snippet",
-        maxResults=20,                 # ✅ Up to 20 videos
-        channelId="UC8vvbk837aQ6kwxflCVMp1Q",  # ✅ Your channel ID
-        order="relevance"              # ✅ Sort by relevance
+        maxResults=20,
+        order="relevance"
     ).execute()
 
-    videos = []
-
-    for item in results.get("items", []):
+    external_videos = []
+    for item in external_results.get("items", []):
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
         url = f"https://www.youtube.com/watch?v={video_id}"
-
-        videos.append({
+        external_videos.append({
             "title": title,
             "video_url": url
         })
 
-    return videos
+    return {
+        "internal": internal_videos,
+        "external": external_videos
+    }
         
 @tool
 def detect_people_and_images(input: str) -> list:
