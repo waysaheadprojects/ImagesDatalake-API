@@ -26,7 +26,7 @@ import BarRaceChart from "./insightRaceBarChart";
 import MediaBarChart from "./mediaBarChart";
 import DataStatusBarChart from "./mediaBarChart";
 
-const ResultComponent = () => {
+const HistoryResultComponent = () => {
   const { responseData, setResponseData } = useResponse();
   const { query, setQuery } = useQueryData();
 
@@ -208,9 +208,9 @@ useEffect(() => {
     };
   }, [responseData]);
 
-  // useEffect(() => {
-  //   fetchExistingData();
-  // }, [location.search]);
+  useEffect(() => {
+    fetchExistingData();
+  }, [location.search]);
 
 
   const renderTabContent = () => {
@@ -340,4 +340,4 @@ useEffect(() => {
 
 
 
-export default ResultComponent;
+export default HistoryResultComponent;

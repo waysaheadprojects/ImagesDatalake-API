@@ -1,12 +1,13 @@
 import SidebarLayout from "../layouts/InnerLayout";
 import Admin from "../pages/admin";
 import AdminDashboard from "../pages/admindashboard";
+import HistoryResultPage from "../pages/historypage";
 import HomePage from "../pages/homepage";
 
 import ResultPage from "../pages/resultpage";
 
 import SearchPage from "../pages/searchpage";
-import TestPage from "../pages/test";
+
 import AdminAuthProvider from "../services/adminAuthProvider";
 
 import AuthProvider from "../services/authprovider";
@@ -29,8 +30,18 @@ const routes = [
     element: <Admin />,
   },
    {
-    path: "/test",
-    element: <TestPage />,
+    path: "/images-ai/history",
+      element: (
+      <AuthProvider>
+        <SidebarLayout />
+      </AuthProvider>
+    ),
+     children: [
+      {
+        index: true,
+        element: <HistoryResultPage />,
+      },
+    ]
   },
 
   {

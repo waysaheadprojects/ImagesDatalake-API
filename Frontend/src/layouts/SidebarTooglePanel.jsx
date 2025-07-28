@@ -42,7 +42,7 @@ const SidebarTogglePanel = ({ title, sections, historyList, navigate, onClose })
   const handleHistoryClick = (session_id) => {
     const encryptedSessionId = encrypt(session_id);
     const urlSafeSessionId = encodeURIComponent(encryptedSessionId);
-    navigate(`/images-ai/result?s=${urlSafeSessionId}`);
+    navigate(`/images-ai/history?s=${urlSafeSessionId}`);
   };
 
   return (
