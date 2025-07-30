@@ -28,7 +28,7 @@ from fastapi import Query
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 
-# ----------------- FastAPI Init ----------------
+# ----------------- FastAPI Init ---------------
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
